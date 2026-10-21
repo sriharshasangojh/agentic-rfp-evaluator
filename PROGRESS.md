@@ -10,10 +10,10 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | F03 | Ranking engine | Approved | 2026-10-22 | Approved by the user. 29 ranking tests pass on the user's machine; 52 total in the build workspace; spec 16.1 fixture matches exactly | 0 |
 | F04 | Validator and gates | Approved | 2026-10-22 | Approved by the user after running pytest locally with no failures. 108 validator + 47 gate tests; validator tests need pydantic (added to requirements.txt) | 0 |
 | F05 | Industry score and strength labels | Approved | 2026-10-22 | Approved by the user after 1 change round (price bands follow the run's budget and quantity). 178 industry + 24 strength tests; no new packages | 1 |
-| F06 | PDF extraction | Not started | | | |
+| F06 | PDF extraction | Approved | 2026-10-22 | Approved by the user after 1 change round (bullets and leading spaces, so PyMuPDF and pypdf give identical text). 509 tests pass on the user's machine; PDFs are uploaded at runtime, never read from disk (DECISIONS 82); BM25 index is F14 | 1 |
 | F07 | LLM settings sidebar | Not started | | | |
 | F08 | Evaluation agent (one supplier) | Not started | | Evaluator requirements text uses the run's budget and quantity (DECISIONS 69) | |
-| F09 | Full run (orchestrator) | Not started | | Add Budget (Rs) and Quantity inputs, pre-filled Rs 60,00,000 and 100, stored with the run (DECISIONS 69) | |
+| F09 | Full run (orchestrator) | Not started | | Add Budget (Rs) and Quantity inputs, pre-filled Rs 60,00,000 and 100, stored with the run (DECISIONS 69). PDFs come only from the upload box, never from disk (DECISIONS 82) | |
 | F10 | Overview tab | Not started | | | |
 | F11 | Scorecards tab | Not started | | | |
 | F12 | Audit: run details and JSON | Not started | | | |

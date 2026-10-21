@@ -5,3 +5,5 @@ pandas
 plotly
 pytest
 pydantic
+pymupdf
+pypdf

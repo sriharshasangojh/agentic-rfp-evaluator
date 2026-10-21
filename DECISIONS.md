@@ -255,3 +255,53 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     limit appears in the source. 301 tests pass in the build workspace (Python 3.10; validator and smoke tests excluded).
     On your machine `pytest` should report 411 passed (23 database, 29 ranking, 108 validator, 47 gates, 178 industry,
     24 insights, 2 smoke).
+
+## F06: PDF extraction
+
+72. **Two PDF readers.** PyMuPDF is used when installed, pypdf otherwise (the spec names PyMuPDF; pypdf is a pure-Python
+    fallback so the app still works where PyMuPDF will not install). Both are in `requirements.txt`. Anyone who already
+    set up the project needs to run `pip install -r requirements.txt` again.
+73. **Page marker format** is `[Page N]` on its own line before each page, pages separated by a blank line. A page with no
+    text still gets its marker, so page numbers always match the real PDF and the evaluator can cite them.
+74. **Chunks only, no search index yet.** The spec lists BM25 chunks under F06, but the index and search belong to F14
+    (the "Ask the proposals" feature), so F06 only splits the text into chunks. This keeps `rank_bm25` out of
+    `requirements.txt` until it is used.
+75. **Chunk rules.** About 300 words per chunk, cut at line breaks (never mid-line), never crossing a page, so a citation
+    such as "(Apex Systems, page 3)" is exact. A single line longer than 300 words is split by words. Trade-off: a page
+    that ends with a short passage gives a small chunk (the smallest across the 7 proposals is 3 words, in BrightPath).
+76. **Fingerprint** is the SHA-256 of the raw file bytes, not of the extracted text, so it is the same with either reader
+    and changes if even one byte of the file changes.
+77. **Text is lightly tidied, the same way for both readers:** line endings unified, spaces trimmed at both ends of every
+    line, 3 or more newlines squeezed to one blank line, and the PDF bullet code 0x7F turned into a real bullet (see
+    81). No Unicode normalisation and no removal of repeated page headers (each page of these PDFs carries a
+    "Supplier | RFP ... | Page N" line; it stays, which is harmless and keeps the page text faithful).
+78. **Friendly errors.** An unreadable file raises `PdfError` with a plain message (empty file, not a PDF, password
+    protected, damaged, no pages, no reader installed, file cannot be opened). Programming mistakes (wrong type, unknown
+    reader name, chunk size below 1) still raise normal errors. A scanned/image-only PDF is not an error: it reads as
+    empty and returns a warning (OCR is out of scope, spec section 18).
+79. **Nothing is printed or logged.** Proposal text is never logged (spec 2.2). Only the developer command
+    `python -m tools.pdf_tool` prints, and only the first 80 characters per file; a test enforces this.
+80. **Verification.** 61 tests run with one reader installed (51 in round 1, 10 added in round 2), plus 7 that run only
+    when both readers are installed. They include the 7 real PDFs: page counts, supplier names, grand totals found in
+    the text, fingerprints, chunk totals equal the page word counts. They pass on Python 3.10 and 3.13 with pypdf. A
+    deliberate-break check (12 changes to the code) is caught by the tests. On your machine, with both readers
+    installed, `pytest` should report 509 passed (484 after round 1, plus 25 in round 2).
+81. **Round 2: both readers now give the same text.** Running `python -m tools.pdf_tool` on the user's machine
+    (PyMuPDF) showed character counts 0 to 20 lower than the pypdf run. A word-level comparison found two causes in
+    the pypdf fallback: (a) the PDFs store each bullet as code 0x7F, which the PDF rules display as a bullet; PyMuPDF
+    and poppler return a bullet, pypdf returned an invisible control character; (b) pypdf left a space at the start of
+    some lines. Both are now handled in `tidy_text`. After the fix the pypdf character counts equal the PyMuPDF counts
+    from the user's machine for all 7 proposals (21,921 / 16,114 / 19,009 / 19,417 / 17,651 / 17,033 / 17,189). A
+    new test compares the two readers page by page whenever both are installed. Other control characters are left
+    as they are (none appear in the 7 proposals). The `Page1` seen once in the Orbit row of the user's pasted table
+    was a copy-paste slip, not a reader difference: the full comparison for Orbit showed bullets only.
+82. **Standing requirement: PDFs are uploaded at runtime, never built in.** Proposals reach the app only through the
+    upload box on the New evaluation tab (F09, 1 to 10 PDFs). The file's bytes are held in memory and passed to
+    `extract_pdf`; nothing is read from disk or saved into the project. No app code reads `data/proposals/` (checked: only
+    the developer command `python -m tools.pdf_tool` and the tests do). Each uploaded PDF gets its supplier name,
+    submission date and experience rating from the upload form. The 7 files in `data/proposals/` are sample material for
+    the tests and for trying the app by uploading them yourself. Anyone with the app's link can upload their own PDFs.
+    Open points to settle at F07 and F09 (not decided now): (a) on a shared deployment all visitors would share one
+    SQLite file, so runs from different visitors would mix unless runs are kept per visitor; (b) a default key in
+    the deployed `st.secrets` would let every visitor spend the owner's credits, while a key typed in the sidebar stays
+    in that visitor's own session only.
