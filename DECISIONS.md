@@ -115,3 +115,34 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     was run against a real seeded database with stand-in Streamlit, pandas and Plotly modules, so the data it
     shows is verified, but the real rendering (and the Plotly options) is not. Those are checked on the user's
     machine (smoke test and screenshot).
+
+## F03: Ranking engine
+
+35. **Exact arithmetic.** Scores are turned into exact fractions from their written form (0.1 stays 1/10), and
+    rounding is done half up to 2 decimals. Python's own `round()` works on binary numbers and would turn
+    62.505 into 62.5 instead of 62.51. The result cannot change with the machine or the order of the input.
+36. **Plain inputs.** `rank_suppliers` takes small frozen data classes (`CriterionWeight`, `SupplierInput`), not
+    database rows. That keeps `tools/ranking.py` free of I/O, and later features convert rows into these.
+37. **Bad input stops the ranking** with a `ValueError` (missing score, score outside 0 to max, duplicate
+    supplier name ignoring capitals, duplicate criterion id, max score of 0, negative weight, weights totalling 0).
+    The validator (F04) and the run-start checks catch these first; this is the last safety net, so nothing is
+    silently repaired. The "weights must total 100" block stays at run start, not here.
+38. **What is rounded.** Only the absolute score and the Peer score (PPI) are rounded before sorting, as the spec
+    says. The PPI is calculated from the exact relative %, not from the rounded ones shown in the table, so a
+    hand calculation from the displayed numbers can differ by 0.01 in rare cases.
+39. **Tie-break wording.** One line per adjacent pair with equal (rounded) PPI, naming the first rule that
+    separated them: earlier submission date, then higher experience rating, then name A to Z. With a three-way
+    tie you get two lines (A over B, B over C).
+40. **Warnings.** Two plain-text warnings: only one supplier (Peer score is 100), and a criterion where every
+    supplier scored 0 (relative % set to 100 for all). They come back in the result for the UI to show later.
+41. **Eligibility is not in this module.** The spec says suppliers that fail a gate or are set aside are still
+    ranked. This engine ranks everyone; the "Not eligible" / "Set aside" marking and the recommendation skipping
+    them come with gates (F04) and insights (F10), so nothing here depends on them.
+42. **Purity is tested.** One test reads `tools/ranking.py` and fails if it imports anything beyond the standard
+    maths and data-class modules, or calls `open`, `print`, a clock or a random function.
+43. **Bonus check.** The spec's what-if numbers (price weight 30%: NexaWorks 86.53, Apex 83.89) are reproduced by
+    a test with hand-written weights. The what-if feature itself is not built; this only confirms the engine
+    handles non-whole weights correctly.
+44. **What was and was not verified.** All 29 ranking tests (52 in total with the database tests) ran in the build
+    workspace on Python 3.10. The code is plain standard-library Python, so the same results are expected on your
+    Python 3.14. The app smoke test still needs your machine.

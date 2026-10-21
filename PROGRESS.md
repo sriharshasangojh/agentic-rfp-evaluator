@@ -7,7 +7,7 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 |---|---|---|---|---|---|
 | F01 | Project skeleton and theme | Approved | 2026-10-22 | Approved by the user after 3 change rounds (mint/teal colours, card layout). Never screenshotted by the build agent: Streamlit can't be installed in the build workspace | 3 |
 | F02 | Database and seed | Approved | 2026-10-22 | Approved by the user. 23 database tests pass in the build workspace; Setup tab rendering never seen by the build agent | 0 |
-| F03 | Ranking engine | Not started | | | |
+| F03 | Ranking engine | Approved | 2026-10-22 | Approved by the user. 29 ranking tests pass on the user's machine; 52 total in the build workspace; spec 16.1 fixture matches exactly | 0 |
 | F04 | Validator and gates | Not started | | | |
 | F05 | Industry score and strength labels | Not started | | | |
 | F06 | PDF extraction | Not started | | | |
