@@ -146,3 +146,45 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 44. **What was and was not verified.** All 29 ranking tests (52 in total with the database tests) ran in the build
     workspace on Python 3.10. The code is plain standard-library Python, so the same results are expected on your
     Python 3.14. The app smoke test still needs your machine.
+
+## F04: Validator and gates
+
+45. **Pydantic added.** `requirements.txt` now lists `pydantic` (v2, unpinned until M1). The models are
+    `ExtractedFacts` (the 21 facts), `ScoredCriterion` and `EvaluationScorecard`. Types are strict: `true`,
+    `"16"` and `NaN` are not numbers, and whole numbers stay whole (16, not 16.0).
+46. **Unusable replies.** The reply must be a JSON object with a `criteria` list. Anything else (broken JSON,
+    a bare list, no `criteria`) gives no scorecard and an `error`, so the caller can retry once as the spec says,
+    then call `failed_evaluation()`. Valid JSON of the wrong shape is treated like broken JSON, because the retry
+    message in section 7.1 already says "matching the required shape".
+47. **Code fences are accepted** (not in the spec). A reply wrapped in a ```json block is used, with a warning.
+    Reason: models often add the fence, and without this every such supplier would burn the retry and could end
+    with all scores 0. Text before or after the JSON is still invalid. Easy to remove if you want it strict.
+48. **Score text.** "8" and "8/10" are read. A fraction is scaled to the criterion's own maximum ("4/5" on a max
+    of 10 is 8; "8/10" on a max of 20 is 16). "8/0", "eight", "8 out of 10", true, null and NaN become 0.
+49. **Order of fixes for a score:** read, then clip to 0..max, then round half up to 1 decimal. Rounding never
+    goes above the maximum. `max_score` always comes from the criteria passed in; a `max_score` in the reply is
+    ignored.
+50. **Every repair has a warning**, including rounding and "text read as a number", because spec 9.1 says each
+    rule produces a warning. A clean reply has none.
+51. **Small extra repairs** so a scorecard is always complete: a blank justification becomes "No justification
+    returned"; blank evidence becomes "Not stated in the proposal"; a criteria entry that is not an object is
+    dropped; an id written as "2" or 2.0 is accepted as 2; `risks` that is not a list is ignored and non-text
+    entries dropped; an `overall_summary` that is not text is ignored. Missing `risks` / `overall_summary` is fine.
+52. **Extracted facts.** The spec fixes the type only for `warranty_type` and `data_wipe`. I chose: yes/no for
+    battery_measured, replacement_within_24h, price_table_present, bis_named, energy_rating_named,
+    security_certification_named, encryption_before_delivery, price_lock_later_orders; text for laptop_model and
+    processor; plain numbers for the rest. A fact of the wrong type becomes null with a warning. If
+    `extracted_facts` itself is missing or not an object, every fact is null with one warning (the scorecard
+    always carries an `ExtractedFacts`, never None). Unknown fact names are ignored without a warning.
+53. **`filled_by_validator` flag** on each criterion. Spec 10.1 says cons include "criteria filled with 0 by the
+    validator", so the scorecard has to remember which ones those were. `failed_evaluation()` marks all of them.
+54. **Blind evaluation.** The `supplier_name` in the reply ("Supplier A") is dropped; the real name is attached
+    later in Python.
+55. **Gates.** Each gate's `rule_key` picks a rule in `tools/gates.py` (the four seeded keys). A missing,
+    null or wrong-type fact fails with "Not stated". A gate with an unknown `rule_key` fails ("Unknown rule ...")
+    rather than being skipped, so a mandatory check can't vanish silently. With no gates at all, everyone is
+    eligible. Gates take a plain dict (`scorecard.extracted_facts.model_dump()`), so `gates.py` needs no pydantic.
+56. **What was and was not verified.** pydantic cannot be installed in the build workspace, so the 108 validator
+    tests and the 47 gate tests were run in a separate cloud container with pydantic 2.13.5 on Python 3.13. The
+    gate tests, ranking tests and database tests also ran in the build workspace on Python 3.10 (99 passed). Not
+    yet run on your Python 3.14. Recent pydantic versions support 3.14.
