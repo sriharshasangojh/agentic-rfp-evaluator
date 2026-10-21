@@ -1,0 +1,13 @@
+# Secrets and local data
+.streamlit/secrets.toml
+.env
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Dev-only screenshots
+snapshots/
