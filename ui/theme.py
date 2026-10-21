@@ -21,6 +21,9 @@ SUPPLIER_COLOURS: tuple[str, ...] = (
     TEAL, "#D81B60", "#7CB342", "#6A1B9A", "#EF6C00", "#455A64", "#8D6E63",
 )
 
+# Weight donut: one calm colour per criterion (criteria are not suppliers, so these are separate).
+CRITERIA_COLOURS: tuple[str, ...] = ("#14A89E", "#6CCBC3", "#A9DDC5", "#8FBF8F", "#CFE6A8")
+
 # Chart colours
 HEATMAP_LOW = "#E0F5F3"
 HEATMAP_HIGH = TEAL_TEXT
@@ -48,7 +51,7 @@ def inject_theme_css() -> None:
         f"""
 <style>
 /* Headings (Streamlit's own heading styles win unless this is !important) */
-.stApp h1, .stApp h2, .stApp h3 {{ color: {HEADING} !important; }}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {{ color: {HEADING} !important; }}
 
 /* Cards: header, tab content and sidebar groups */
 .st-key-hero, [class*="st-key-card_"], [class*="st-key-side_"] {{

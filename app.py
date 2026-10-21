@@ -1,8 +1,11 @@
 """Streamlit entry point: page setup, theme, sidebar and the eight tabs. No business logic."""
 from __future__ import annotations
 
+import sqlite3
+
 import streamlit as st
 
+from db.seed import ensure_database
 from ui import (
     tab_analysis,
     tab_ask,
@@ -29,9 +32,22 @@ TABS = (
 )
 
 
+def open_database() -> None:
+    """Create and seed the database. Stops the page with a friendly message if that is not possible."""
+    try:
+        ensure_database()
+    except (sqlite3.Error, OSError):
+        st.error(
+            "The database could not be opened or created. Close any other program using "
+            "`rfp_evaluation.db`, wait a few seconds for OneDrive to finish syncing, then reload the page."
+        )
+        st.stop()
+
+
 def main() -> None:
     st.set_page_config(page_title="RFP Evaluator", layout="wide")
     inject_theme_css()
+    open_database()
     render_sidebar()
 
     with st.container(key="hero"):

@@ -80,3 +80,38 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 23. **Not verified visually.** Streamlit can't run in the build workspace, so the card, header and sidebar CSS
     was checked against the installed Streamlit's code, not on screen. Contrast ratios were calculated
     (all text at least 5:1; see the round 4 snapshot).
+
+## F02: Database and seed
+
+24. **Setup tab is read-only.** Section 13.3 lists a criteria table, weight donut, gate list and weight-total check, but
+    no editing controls, so none were built. To change a weight or switch a criterion off, edit the database
+    (`evaluation_criteria.weight` / `is_active`); the tab, the weight check and later the prompts follow it.
+    An edit form can be added if wanted.
+25. **Tests added** (not in the section 4 list): `tests/test_database.py` (23 tests) and `tests/conftest.py`, which
+    gives every test its own empty database through the `RFP_DB_PATH` environment variable, so tests never touch
+    the real `rfp_evaluation.db`.
+26. **Nullable feedback columns.** `reviewer_feedback.supplier_name` and `attempt_no` may be NULL, because run-wide
+    actions (reweight, accept) have no supplier or attempt. The spec only marks criterion_id, rating and
+    override_score as nullable.
+27. **Where things live.** `create_schema()` is in `db/repository.py` (it reads `db/schema.sql`); `db/seed.py` calls it.
+    Each seed table is filled only while it is empty, so reseeding adds nothing and never overwrites edits.
+28. **Gate and benchmark text.** Gate descriptions are plain language; the rules themselves are coded in
+    `tools/gates.py` (F04). Benchmark rule texts copy section 9.5. Its warranty "Above" rule says "3+ years
+    on-site and repair of 1 day or less" while "Meets" says "3 years on-site"; F05 will state exactly how
+    those two are told apart.
+29. **Append-only audit log.** Two database triggers make UPDATE and DELETE on `audit_log` fail, and
+    `audit.log_event()` refuses any details that contain a key such as `api_key`, `secret` or `password`
+    (golden rule 6).
+30. **Setup tab display.** Tables use `st.table` (it wraps the long descriptions; `st.dataframe` cuts them off).
+    The donut has its own five teal/green colours, separate from the supplier colours, and uses
+    `width="stretch"`, which this Streamlit version supports. Headings of level 4 get the heading colour too.
+31. **Startup.** `app.py` creates and seeds `rfp_evaluation.db` (project root) on every start. If that fails
+    (for example OneDrive holds the file), the page shows a friendly message instead of a stack trace.
+    SQLite waits up to 10 seconds for a locked file.
+32. **Requirements.** `pandas` and `plotly` were added. The user must run `pip install -r requirements.txt` again.
+33. **Bug found by the tests.** A weight total of exactly 100.01 or 99.99 was rejected because of floating-point
+    rounding; the check now rounds before comparing.
+34. **What was and was not verified.** The 23 database tests were run in the build workspace. The Setup tab's logic
+    was run against a real seeded database with stand-in Streamlit, pandas and Plotly modules, so the data it
+    shows is verified, but the real rendering (and the Plotly options) is not. Those are checked on the user's
+    machine (smoke test and screenshot).
