@@ -188,3 +188,70 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     tests and the 47 gate tests were run in a separate cloud container with pydantic 2.13.5 on Python 3.13. The
     gate tests, ranking tests and database tests also ran in the build workspace on Python 3.10 (99 passed). Not
     yet run on your Python 3.14. Recent pydantic versions support 3.14.
+
+## F05: Industry score and strength labels
+
+57. **Grading rules where the spec table leaves a gap.**
+    - *Warranty:* 3+ years on-site is Meets; add a repair time of 1 day or less and it is Above (Above is checked
+      first, so exactly 3 years on-site with a 1-day repair is Above). Under 3 years or carry-in is Below. Years known but
+      cover type not stated is Below ("on-site cover not confirmed"), because Meets needs on-site. No years: Not stated.
+    - *Repair time:* replacement within 24 h is Above. The spec's "2 to 5 days" leaves a gap between 1 and 2 days; I put
+      it in Meets. Over 5 days is Below.
+    - *Battery:* under 8 h, or not confirmed as measured (false or not stated), is Below. Measured 8 to 10 h is Meets,
+      over 10 h is Above. No hours: Not stated.
+    - *Memory and storage:* falling short of either minimum is Below even if the other is above it (32 GB RAM with a
+      256 GB SSD is Below). If one value is missing and the other isn't short, it is Not stated.
+    - *Delivery:* over 8 weeks Below, 6 to 8 Meets, under 6 Above.
+    - *Certifications:* BIS and energy rating is Meets; plus a security certification is Above; anything less is Below
+      ("none named" or only some). If all three are null it is Not stated.
+    - *Data wiping:* "certified_standard" is Above, "described" is Meets, null is Not stated (0 points). The spec's
+      "Below = not described" can't be told apart from "not stated" with the facts we extract, so Below never occurs here.
+58. **Prices.** A unit price or grand total of 0 or less is treated as not stated, because a model may write 0 instead
+    of null. The estimate is `grand_total_rs / 1.18 / 100` as in the spec (18% GST; the 100 laptops is now the run's own quantity, see item 65; the fixed price limits are gone too) and the warning text is exactly "Unit price estimated from total". A stated unit price always wins.
+59. **Weights.** Each attribute gets an equal share of its criterion's weight, using the active criteria passed in
+    (seeded: unit price 20, warranty 5, repair time 5, battery 15, memory and storage 15, delivery 20, certifications
+    10, data wiping 10). An attribute whose criterion is not active is left out and the average is taken over what
+    remains, so the score is still out of 100.
+60. **Rounding.** Exact fractions, half up to 2 decimals (78.125 becomes 78.13). The small rounding helper is copied
+    into `industry.py` instead of shared: `ranking.py` and `validator.py` are approved, and the spec's folder list
+    has no shared-helpers file.
+61. **Unknown attribute.** A benchmark row with no grading rule is graded Not stated with a warning, not a crash.
+62. **Strength labels** use exact fractions on the numbers as written, so 2.4 out of 3 is exactly 80% and Strong.
+    `insights.py` holds only the labels for now; pros and cons, recommendation, what-if and negotiation selection are
+    added by their own features. A maximum of 0 or less raises an error.
+63. **Rupee text** in the breakdown uses Indian digit grouping (Rs 1,20,000).
+64. **What was and was not verified.** 155 new tests (131 industry, 24 strength labels). With the existing ones, 254
+    tests pass in the build workspace on Python 3.10 (the validator and app smoke tests can't run there). On your
+    machine `pytest` should now report 364 passed (23 database, 29 ranking, 108 validator, 47 gates, 131 industry,
+    24 insights, 2 smoke). No new packages. (Round 2 changed these counts: see item 71.)
+
+### F05 round 2: price grading follows the budget (user request)
+
+65. **User request: any price level must work.** The fixed Rs 45,000 / 60,000 limits and the fixed 100 laptops are
+    gone from `industry.py`. `industry_score(facts, benchmarks, criteria, terms)` takes `terms`, a `PurchaseTerms`
+    (the run's total budget in Rs and number of units), as a required argument. It supersedes the fixed constants in item 58.
+66. **The bands:** Below = over the budget per unit (budget / quantity); Meets = 75% to 100% of it; Above = under 75%.
+    At the spec's own scenario (Rs 60,00,000 for 100 laptops) that is exactly 45,000 and 60,000, and the 7 test
+    proposals grade as before (Apex Below, BrightPath Above, four Meets, Vertexa Not stated). The 75% is my
+    generalisation of the spec's 45,000 / 60,000 and lives in one named constant, `PRICE_MEETS_FROM_SHARE`.
+67. **Estimating from the total** uses the run's quantity; the 18% GST divisor is still a constant. As in the spec, the
+    estimate is before GST and is compared with the budget per unit (which includes GST).
+68. **No budget given** (`terms=None`): the price is graded Not stated with a warning and every other attribute is graded
+    as usual. An unusable budget or quantity (not a number above 0, not a whole number of at least 1) raises an error
+    when the terms are created, so the input checks in F09 must block the run with a friendly message first.
+69. **Standing requirement for later features (user request): budget and quantity are inputs of each run, never constants.**
+    - F09: the New evaluation form gets "Budget (Rs)" and "Quantity" fields, pre-filled with the spec scenario
+      (Rs 60,00,000 and 100), checked before the run, and stored with the run (the F02 `rfp_runs` table has no column
+      for them yet, so F09 decides: new columns or the run's settings JSON).
+    - F08/F09: the buyer requirements text given to the evaluator uses the entered budget and quantity.
+    - F17 price-vs-budget bar, F18 scatter budget line, F20 negotiation ("over budget by ...", "within our Rs X
+      budget") and the over/under colouring use the same values.
+70. **Not made dynamic (yet):** the other baselines (RAM and SSD, battery hours, delivery weeks, warranty years, repair
+    days) and the four gates (warranty at least 3 years, delivery within 8 weeks, and so on) still follow the Meridian
+    laptop RFP. To reuse the app for a different product or RFP these would need to be editable too; ask the user
+    whether that is wanted once the core features are done.
+71. **Verification (round 2).** 47 new tests (178 industry, 24 strength labels). A deliberate-break check confirmed the
+    tests fail if a fixed Rs 60,000 budget or a fixed quantity of 100 is put back, and one test fails if any fixed price
+    limit appears in the source. 301 tests pass in the build workspace (Python 3.10; validator and smoke tests excluded).
+    On your machine `pytest` should report 411 passed (23 database, 29 ranking, 108 validator, 47 gates, 178 industry,
+    24 insights, 2 smoke).
