@@ -1,0 +1,4 @@
+# Only what the finished features need. Each later feature adds its own packages.
+# Exact versions are pinned before the first push (milestone M1), from a clean install.
+streamlit
+pytest
