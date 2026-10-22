@@ -1,0 +1,42 @@
+{
+  "pages": [
+    {
+      "models": [
+        {
+          "id": "grok-4",
+          "object": "model",
+          "owned_by": "test",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        {
+          "id": "grok-4-fast",
+          "object": "model",
+          "owned_by": "test",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        {
+          "id": "grok-2-image",
+          "object": "model",
+          "owned_by": "test",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -11,7 +11,7 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | F04 | Validator and gates | Approved | 2026-10-22 | Approved by the user after running pytest locally with no failures. 108 validator + 47 gate tests; validator tests need pydantic (added to requirements.txt) | 0 |
 | F05 | Industry score and strength labels | Approved | 2026-10-22 | Approved by the user after 1 change round (price bands follow the run's budget and quantity). 178 industry + 24 strength tests; no new packages | 1 |
 | F06 | PDF extraction | Approved | 2026-10-22 | Approved by the user after 1 change round (bullets and leading spaces, so PyMuPDF and pypdf give identical text). 509 tests pass on the user's machine; PDFs are uploaded at runtime, never read from disk (DECISIONS 82); BM25 index is F14 | 1 |
-| F07 | LLM settings sidebar | Not started | | | |
+| F07 | LLM settings sidebar | Approved | 2026-10-23 | Approved by the user after 1 change round (one test's fake provider now refuses a blank key like the real client). 139 client + 16 sidebar tests; 664 tests pass on the user's machine; provider calls never tried live by the build agent (no key in the build workspace); adds httpx and litellm | 1 |
 | F08 | Evaluation agent (one supplier) | Not started | | Evaluator requirements text uses the run's budget and quantity (DECISIONS 69) | |
 | F09 | Full run (orchestrator) | Not started | | Add Budget (Rs) and Quantity inputs, pre-filled Rs 60,00,000 and 100, stored with the run (DECISIONS 69). PDFs come only from the upload box, never from disk (DECISIONS 82) | |
 | F10 | Overview tab | Not started | | | |

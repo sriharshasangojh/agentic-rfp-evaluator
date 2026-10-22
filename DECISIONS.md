@@ -305,3 +305,82 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     SQLite file, so runs from different visitors would mix unless runs are kept per visitor; (b) a default key in
     the deployed `st.secrets` would let every visitor spend the owner's credits, while a key typed in the sidebar stays
     in that visitor's own session only.
+
+## F07: LLM settings sidebar
+
+83. **Provider addresses, headers and LiteLLM prefixes.** Read from each provider's own documentation on 2026-10-23.
+    The key is sent only in a header, never in the address. Lists are asked for in the largest page size, and
+    further pages are followed (at most 20).
+    - OpenAI: `GET https://api.openai.com/v1/models`, `Authorization: Bearer`. Prefix `openai/`.
+    - Anthropic: `GET https://api.anthropic.com/v1/models?limit=1000` (next page: `has_more` and `last_id` become
+      `after_id`), `Authorization: Bearer` plus `anthropic-version: 2026-10-21`. Prefix `anthropic/`.
+    - Google Gemini: `GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000` (next page:
+      `nextPageToken` becomes `pageToken`), `x-goog-api-key` header. Prefix `gemini/`.
+    - Cohere: `GET https://api.cohere.com/v1/models?endpoint=chat&page_size=1000` (`next_page_token` becomes
+      `page_token`), `Authorization: Bearer`. Prefix `cohere_chat/`.
+    - xAI Grok: `GET https://api.x.ai/v1/language-models`, `Authorization: Bearer`. Prefix `xai/`.
+    - DeepSeek: `GET https://api.deepseek.com/models`, `Authorization: Bearer`. Prefix `deepseek/`.
+    The `openai/` and `anthropic/` prefixes are the standard LiteLLM ones and were not re-read from LiteLLM's pages
+    (those pages did not load); the other four were confirmed from LiteLLM's docs or examples.
+84. **The spec says `cohere/`; I used `cohere_chat/`.** LiteLLM's Cohere page documents only `cohere_chat/` for chat
+    models (it uses Cohere's v2 chat API by default) and does not mention `cohere/`.
+85. **Anthropic header.** Anthropic's current docs show `Authorization: Bearer` as the main way and call `x-api-key`
+    a legacy fallback that still works. I send Bearer plus the version header from the List Models page's own
+    example (`ANTHROPIC_VERSION` in `llm/client.py`; the older `2023-06-01` is still listed in their version
+    history). If a valid Anthropic key is ever refused, these two lines are the first place to look.
+86. **Gemini key in a header.** The models.list page shows the key as `?key=...`, other Gemini pages show the
+    `x-goog-api-key` header. I use the header so the key can never appear in an address (HTTP libraries quote
+    addresses in their error messages). Not tried against the live service.
+87. **xAI uses `/v1/language-models`** because it says what each model outputs; plain `/v1/models` has no such field.
+88. **Which models count as chat models** (spec 6.2). Where a provider gives structured information I use it:
+    Gemini `supportedGenerationMethods` contains `generateContent`; Cohere `endpoints` contains `chat` and the model
+    is not deprecated; xAI and DeepSeek `output_modalities` contains `text`. For OpenAI, Gemini, xAI and DeepSeek I
+    also drop names containing the whole words embedding, moderation, whisper, tts, dall-e, image, imagen, audio,
+    transcribe, realtime, live, davinci, babbage, instruct, sora, veo, codex, computer or rerank. Anthropic's
+    list is all chat models, so nothing is dropped. A future model with an unusual name could slip through or be
+    dropped wrongly; the user always chooses the model, and a wrong choice gives a clear message.
+89. **No model is hard-coded or pre-selected.** The list always comes from the provider (DeepSeek's docs already
+    list different names from a year ago), and the dropdown starts with nothing chosen, so the person picks the
+    judge on purpose.
+90. **`call_llm` signature.** The spec's `call_llm(messages, temperature, json_mode, timeout)` has no way to say
+    which model or key to use, so the first argument is `settings` (provider, model, key). It returns
+    `LLMResult(text, tokens, cost_usd, warnings)`; `warnings` carries the "temperature was dropped" note, and tokens
+    or cost are `None` when unknown (never 0). `backend` and `sleep` are optional extra arguments that let the tests
+    use fakes.
+91. **Errors and retries.** Provider errors are sorted by their class name and status code, not by their text
+    (LiteLLM gives connection errors status 500, so names are checked first). Timeout, connection problem, 5xx and
+    rate limit: one retry after 2 seconds, then an `LLMError`. Bad key, unknown model and other 4xx: no retry. If a
+    provider refuses `temperature` (a 400 that mentions it), the call is repeated once without it and a warning is
+    returned (spec 6.3). I did the same for `response_format` (JSON mode), since the spec says to rely on the
+    prompt when JSON mode is not supported. Every failure becomes an `LLMError` with a fixed friendly message that
+    names the provider. The provider's own wording is never shown, because providers sometimes echo part of a key
+    in a 401 message, and errors are raised `from None` so no earlier error is attached.
+92. **Libraries load on first use.** `httpx` and `litellm` are imported only when a model list or a call is made
+    (LiteLLM is slow to import). Starting the app and running the tests need neither. If one is missing the message
+    says to run `pip install -r requirements.txt`. Both are now in `requirements.txt`.
+93. **How the key is handled.** It lives only in the password box (`st.session_state`). The per-session model cache is
+    filed under a SHA-256 fingerprint of provider and key, never under the key itself. A key containing spaces,
+    line breaks or non-ASCII characters is refused before any request is made. Printing the settings object never
+    shows the key. A test fails if the client ever prints, logs, or puts a key in an address.
+94. **Owner-provided default key** (spec 2.2 rule 6; this settles the open point (b) in item 82). If the app's owner
+    sets one of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `COHERE_API_KEY`,
+    `XAI_API_KEY`, `DEEPSEEK_API_KEY` in Streamlit secrets or the environment, the sidebar uses it when the key
+    box is empty and says so; a typed key always wins; the key is never displayed. Nothing is set by default, so on a
+    shared link each visitor must bring their own key unless the owner chooses otherwise.
+95. **Stale choices are cleared.** Changing the provider or the key empties the model list, the chosen model and the
+    message, so a model from one provider can never be used with another's key. Going back to a provider and key
+    already validated in this session restores its list from the session cache without another request.
+96. **Run lock and the accessor for later features.** The model dropdown is disabled while
+    `st.session_state["run_in_progress"]` is true; F09 sets that flag while a batch runs. `get_llm_settings()` in
+    `ui/sidebar.py` is what F08 and F09 call: it returns `None` until a key has been validated and a model chosen.
+    The temperature note stays as plain text; temperatures are fixed in `llm/client.py` (`temperature_for`).
+97. **What was not tested live.** There was no API key and no way to reach providers from the build workspace, so
+    the requests were built from the documentation and the tests use fakes shaped like the documented replies
+    (`tests/fixtures/models_*.json`, written by hand, not recorded). Streamlit cannot be installed in the build
+    workspace either, so the sidebar's logic was run against a stand-in for Streamlit and the real-app tests in
+    `tests/test_sidebar.py` run only on the user's machine. Fake keys in the tests avoid the `sk-` pattern so the
+    milestone secret scan has no false alarms. That scan will still list a few code lines such as
+    `api_key=key`; those are variables, not secrets.
+98. **Verification.** 139 client tests and 16 sidebar tests. A deliberate-break check (26 changes to the client, such
+    as a wrong address, a dropped page, a leaked error text, a removed pause) was caught every time. On the user's
+    machine `pytest` should report 664 passed (509 before, plus 155).
