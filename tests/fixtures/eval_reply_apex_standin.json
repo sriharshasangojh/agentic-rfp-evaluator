@@ -1,0 +1,63 @@
+{
+  "supplier_name": "Supplier A",
+  "criteria": [
+    {
+      "criterion_id": 1,
+      "score": 9,
+      "justification": "Names the exact Intel Core i7-1365U vPro processor, 16 GB DDR5, 512 GB self-encrypting SSD, 1.29 kg weight and MIL-STD-810H testing, and gives a repeatable battery test method. The same model is offered for 12 months of later orders.",
+      "evidence": "72 Wh lithium polymer; 11.5 hours measured; 65 W USB-C fast charge to 80 percent in 60 minutes (Page 2)"
+    },
+    {
+      "criterion_id": 2,
+      "score": 9,
+      "justification": "A dated plan with a 5-unit pilot, two batches, named team members, imaging and enrolment before dispatch, and a risk table. Delivery in 6 weeks is inside the 8-week limit.",
+      "evidence": "pilot of 5 units in Week 2, Batch 1 of 50 units completed in Week 4, Batch 2 of 50 units in Week 5, handover in Week 6 (Page 3)"
+    },
+    {
+      "criterion_id": 3,
+      "score": 5,
+      "justification": "Supplier A gives an itemised price table with GST, assumptions, payment terms and a 60-day price validity, which is strong. The grand total is above the buyer's budget, so the value is only adequate.",
+      "evidence": "The total of Rs 73,98,600 is above the Rs 60 lakh guideline. (Page 4)"
+    },
+    {
+      "criterion_id": 4,
+      "score": 9,
+      "justification": "Encryption is enabled before dispatch, with a discrete TPM 2.0 chip, secure boot, BIS registration, an energy rating and a wipe certificate per device to a named standard.",
+      "evidence": "BitLocker drive encryption with XTS-AES 256 is enabled in the lab before dispatch (Page 5)"
+    },
+    {
+      "criterion_id": 5,
+      "score": 9,
+      "justification": "On-site warranty for 3 years with next-business-day repair, a 4-hour response, a dedicated account manager and six named references.",
+      "evidence": "3-year on-site warranty, 4-hour response and next-business-day repair (Page 3)"
+    }
+  ],
+  "extracted_facts": {
+    "laptop_model": "Apex ProBook 14 G5",
+    "processor": "Intel Core i7-1365U vPro",
+    "ram_gb": 16,
+    "ssd_gb": 512,
+    "battery_hours": 11.5,
+    "battery_measured": true,
+    "weight_kg": 1.29,
+    "warranty_years": 3,
+    "warranty_type": "on-site",
+    "repair_time_days": 1,
+    "replacement_within_24h": true,
+    "delivery_weeks": 6,
+    "grand_total_rs": 7398600,
+    "unit_price_rs": 59000,
+    "price_table_present": true,
+    "bis_named": true,
+    "energy_rating_named": true,
+    "security_certification_named": true,
+    "data_wipe": "certified_standard",
+    "encryption_before_delivery": true,
+    "price_lock_later_orders": true
+  },
+  "risks": [
+    "The grand total is above the buyer's stated budget",
+    "Supplier A caps on-site setup support at 12 working days; extra days are charged"
+  ],
+  "overall_summary": "Supplier A offers a premium, low-risk proposal with the strongest specification, security and support, but its total price is above the budget."
+}
