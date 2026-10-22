@@ -35,6 +35,7 @@ FILES_KEY = "ne_files"
 PDF_CACHE_KEY = "ne_pdf_cache"     # {file id: _Upload}, so a file is read once
 RESULT_KEY = "ne_result"           # the RunResult of the latest run, shown until the next run starts
 BUTTON_KEY = "ne_evaluate"
+SHOWN_RUN_KEY = "shown_run_id"     # the finished run that the Overview (and later the Scorecards and Audit tabs) show
 REQUEST_KEY = "ne_run_requested"   # set by the button; the next redraw of this tab runs the batch (and clears it at once)
 
 MIN_DATE = date(orchestrator.FIRST_YEAR, 1, 1)   # the range the date box accepts
@@ -175,6 +176,8 @@ def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTer
     finally:
         st.session_state[sidebar.RUN_KEY] = False   # also when the script is stopped half way, so nothing stays locked
     st.session_state[RESULT_KEY] = result
+    if result is not None and result.status == repository.RUN_EVALUATED:
+        st.session_state[SHOWN_RUN_KEY] = result.run_id
     st.rerun()
 
 

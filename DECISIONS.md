@@ -587,3 +587,64 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     The tab was run only against a stand-in for Streamlit here (upload, forms, click, live log, redraw, lock released), never
     in real Streamlit. On the user's machine `pytest` should now report 902 passed (846 from the last run + 53 orchestrator
     + 3 tab).
+
+## F10: Overview tab
+
+137. **Where the code is.** `ui/tab_overview.py` draws the tab; its `build_overview` works out everything shown from a
+    saved run and uses no Streamlit and no database. `tools/insights.py` (still pure) holds the recommendation rule and
+    the industry warning. `db/repository.py` has two new reads, `get_run` and `list_supplier_results`. `agents/orchestrator.py`
+    gains two tiny helpers (`format_submitted`, `format_experience`) so the New evaluation table and the Overview write
+    dates and ratings the same way; the F09 table itself is unchanged.
+138. **Which run the Overview shows.** The run that just finished in this browser session. New evaluation stores its id in
+    `shown_run_id` when the status is "Evaluated", and the Overview reads that run back from the database, so what is
+    shown is exactly what was saved. A run that stops or fails does not replace what is shown. After a page reload the
+    Overview is empty until the run history (F21) can reopen a run. I did not use "the newest run in the database" on
+    purpose: with open point 82a (everyone sharing one database on a public link) that could show another visitor's run.
+139. **Recommended and runner-up (spec 10.2).** Recommended = the highest-ranked supplier that passes every mandatory
+    check. The spec says the runner-up is "the next one"; I read that as the next supplier that also passes every
+    check, not simply the next rank, because the runner-up is the fallback if the recommendation is rejected and a
+    supplier that fails a check cannot be recommended. If you want the next rank whatever its checks, it is a one-line
+    change. A supplier the buyer sets aside (F19) will be passed in as not eligible, so this rule needs no change then.
+140. **The sentence under the recommended supplier.** The spec says the reason is worded by the summarizer, which is F16.
+    Until then Python writes one factual sentence: "Ranked 1 of 7 and passes every mandatory check.", or, when better-ranked
+    suppliers fail a check, "Ranked 3 of 7. A and B rank higher but do not pass every mandatory check (hover over the Not
+    eligible badge in the table to see why)." F16 adds the worded reason next to it.
+141. **Nobody passes every check.** The card says "No supplier meets every mandatory requirement." and names the top-ranked
+    supplier with the checks it failed (spec 10.2). No supplier is recommended and no industry warning is shown.
+142. **The industry warning.** Only for the recommended supplier, and only when its industry score is under 60: "Below industry
+    standard on: <the attributes graded Below or Not stated>". The spec also asks for a link to negotiation; negotiation is
+    F20, so the link is not there yet.
+143. **The leaderboard and the strength table are small HTML tables.** The spec wants an Eligible badge whose hover shows the
+    failed gate, and Streamlit's data table cannot do a coloured badge or a hover on one cell. Every piece of text from a
+    proposal or from the buyer goes through `html.escape`; each table is one line of HTML with its own style, because
+    Streamlit ends an HTML block at a blank line. Touch screens cannot hover, so a caption says where to hover, and when
+    nobody is eligible the failed checks are also written in the card. The badge always prints the word.
+144. **Strength cells show the word and the marks**, for example "Strong (9/10)". The spec only requires the word; the marks are
+    my addition so a manager can see what is behind the label. The label is worked out again from the saved marks when the
+    page is drawn (`strength_label`), not read from the stored label, so it will follow a human override (F13).
+145. **Tooltips.** The spec's PPI and Industry score tooltips are on the column headings and on the card's numbers. "Overall /100"
+    got one too, my wording: "The weighted total of the marks for each criterion, out of 100."
+146. **Left for later features (by the backlog).** Pros and cons and the worded reason (F16), the price vs budget bar (F17),
+    evidence found marks (F15), warnings per supplier (Scorecards, F11). No chart is added in F10.
+147. **Verification.** 11 new insights tests, 9 new database tests, 2 new orchestrator tests and the new
+    `tests/test_tab_overview.py` (29 tests on the Overview's own functions, 5 on the real app). 51 deliberate breaks of the new
+    code: 3 slipped through the first time. One was a real gap (the database test used names whose alphabetical order equals
+    their rank order, so sorting by name passed); the test now uses reversed names and catches it. The other two are in the
+    code that draws the screen and are only reachable by the real-app tests, which cannot run in the build workspace;
+    I checked those two screens against the Streamlit stand-in instead (run not found, nobody eligible). Round 2: the user's
+    own run reported 958 tests, 956 passed and 2 failed. Both failures were a mistake in my new real-app tests, not in the tab:
+    the helper made a new fake model for every call, so every supplier received the first supplier's reply (all scores equal,
+    every peer score 100) and the "stopped run" test never saw its error. It now uses one fake model for the whole batch. The
+    same run also confirms the other three real-app tests (empty tab, run not found, nobody eligible), which covered the two
+    screen mutations that I could only check against the stand-in. `pytest` should now report 958 passed.
+148. **No screenshot of the real app.** Streamlit cannot be installed in the build workspace, so the snapshot shows the
+    real table HTML drawn in a browser on a page with the theme colours; the recommendation card there only imitates the
+    Streamlit number boxes. Please check the live tab (steps in the snapshot).
+149. **Round 3 (user request): the runner-up looked grey.** It was a line of small grey note text. It is now its own strip
+    under the recommended supplier: a "RUNNER-UP" label in dark teal, the supplier name in bold deep teal, and
+    "Ranked 2 · Peer score 85.56" in dark slate (the page's normal text colour), on the soft mint tint used for the
+    recommended row of the table, with a teal bar on the left. It stays smaller than the recommended supplier (1.15 rem against
+    1.7 rem) so the recommendation is still the first thing seen. Only the runner-up changed; the sentence under the
+    recommended supplier and the other notes keep the small grey style. Two tests added (the strip's colours and content,
+    and that a name cannot inject HTML); 6 deliberate breaks of the strip, all caught. `pytest` should now report 960 passed
+    (958 + 2).

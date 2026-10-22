@@ -253,6 +253,16 @@ def default_supplier_name(file_name: str) -> str:
     return evaluator.title_from_filename(PurePath(file_name))
 
 
+def format_submitted(moment: date) -> str:
+    """'5 Oct 2026', the way every leaderboard shows a submission date."""
+    return f"{moment.day} {moment:%b %Y}"
+
+
+def format_experience(rating: int | None) -> str:
+    """The experience rating as shown on screen: the number, or 'Not rated' when the buyer left it empty."""
+    return "Not rated" if rating is None else str(rating)
+
+
 LEADERBOARD_COLUMNS = ("Rank", "Supplier", "Overall /100", "Peer score (PPI)", "Industry score", "Submitted", "Experience", "Eligible")
 
 
@@ -266,12 +276,11 @@ def leaderboard_rows(suppliers: Sequence[SupplierSummary]) -> list[dict[str, Any
             eligible = "Yes"
         else:
             eligible = "No: " + "; ".join(supplier.failed_gates)
-        moment = supplier.submission_date
         rows.append({
             "Rank": supplier.rank, "Supplier": supplier.name, "Overall /100": supplier.absolute_score,
             "Peer score (PPI)": supplier.ppi, "Industry score": supplier.industry_score,
-            "Submitted": f"{moment.day} {moment:%b %Y}",
-            "Experience": "Not rated" if supplier.experience_rating is None else str(supplier.experience_rating),
+            "Submitted": format_submitted(supplier.submission_date),
+            "Experience": format_experience(supplier.experience_rating),
             "Eligible": eligible})
     return rows
 

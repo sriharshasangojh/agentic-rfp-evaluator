@@ -1,13 +1,16 @@
 """All reads and writes of the SQLite database. Other modules never open the database themselves."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "rfp_evaluation.db"
 DB_PATH_ENV = "RFP_DB_PATH"  # optional override, used by the tests
@@ -294,3 +297,78 @@ def save_supplier_result(
         (run_id, supplier_name, submission_date, experience_rating, absolute_score, ppi, industry_score,
          final_rank, int(gates_passed), result_json),
     )
+
+
+# ---------------------------------------------------------------- reading a saved run back (F10)
+
+@dataclass(frozen=True)
+class RunRecord:
+    """One row of `rfp_runs`. `budget_rs` and `quantity` are None for a run saved before F09."""
+
+    rfp_run_id: str
+    created_at: str
+    status: str
+    provider: str | None
+    model: str | None
+    temperature: float | None
+    template_id: str
+    criteria_snapshot: list[dict[str, Any]]
+    reviewer_name: str
+    total_tokens: int | None
+    total_cost_usd: float | None
+    duration_seconds: float | None
+    budget_rs: float | None
+    quantity: int | None
+
+
+@dataclass(frozen=True)
+class StoredSupplier:
+    """One row of `supplier_results`, with `result_json` opened up into `result` (empty if it cannot be read)."""
+
+    supplier_name: str
+    submission_date: date
+    experience_rating: int | None
+    absolute_score: float
+    ppi: float
+    industry_score: float
+    final_rank: int
+    gates_passed: bool
+    result: dict[str, Any]
+
+
+def _json_object(text: str | None) -> Any:
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+def get_run(conn: sqlite3.Connection, run_id: str) -> RunRecord | None:
+    row = conn.execute(
+        "SELECT rfp_run_id, created_at, status, provider, model, temperature, template_id, criteria_snapshot_json, "
+        "reviewer_name, total_tokens, total_cost_usd, duration_seconds, budget_rs, quantity FROM rfp_runs WHERE rfp_run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    values = dict(row)
+    snapshot = _json_object(values.pop("criteria_snapshot_json"))
+    return RunRecord(**values, criteria_snapshot=snapshot if isinstance(snapshot, list) else [])
+
+
+def list_supplier_results(conn: sqlite3.Connection, run_id: str) -> list[StoredSupplier]:
+    """Every supplier of a run, best rank first."""
+    rows = conn.execute(
+        "SELECT supplier_name, submission_date, experience_rating, absolute_score, ppi, industry_score, final_rank, "
+        "gates_passed, result_json FROM supplier_results WHERE rfp_run_id = ? ORDER BY final_rank, supplier_name",
+        (run_id,),
+    ).fetchall()
+    suppliers: list[StoredSupplier] = []
+    for row in rows:
+        values = dict(row)
+        result = _json_object(values.pop("result_json"))
+        suppliers.append(StoredSupplier(
+            **{**values, "submission_date": date.fromisoformat(values["submission_date"]),
+               "gates_passed": bool(values["gates_passed"])},
+            result=result if isinstance(result, dict) else {}))
+    return suppliers

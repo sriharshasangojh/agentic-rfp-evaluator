@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
+from datetime import date
 
 import pytest
 
@@ -295,3 +296,71 @@ def test_a_database_that_still_requires_the_rating_is_rebuilt_without_losing_row
         repository.save_supplier_result(conn, **_result_kwargs(run_id, "Bad", 9))
     with pytest.raises(sqlite3.IntegrityError):
         repository.save_supplier_result(conn, **_result_kwargs("RUN-NOPE", "X", 3))
+
+
+# --- reading a saved run back (F10) -------------------------------------------------------------------
+
+def _save(conn: sqlite3.Connection, run_id: str, name: str, rank: int, *, passed: bool = True, result_json: str = "{}",
+          rating: int | None = 3, when: str = "2026-10-05") -> None:
+    repository.save_supplier_result(
+        conn, run_id=run_id, supplier_name=name, submission_date=when, experience_rating=rating, absolute_score=70.5,
+        ppi=80.25, industry_score=61.0, final_rank=rank, gates_passed=passed, result_json=result_json)
+
+
+def test_a_run_is_read_back_with_its_settings_and_the_criteria_snapshot(conn: sqlite3.Connection) -> None:
+    run_id = "RUN-TEST-0003"
+    repository.create_run(
+        conn, run_id=run_id, created_at="2026-10-23T09:30:00+00:00", provider="OpenAI", model="gpt-4o-mini", temperature=0,
+        template_id=repository.DEFAULT_TEMPLATE_ID,
+        criteria_snapshot_json=json.dumps([{"criterion_id": 1, "name": "Technical Capability", "weight": 30, "max_score": 10}]),
+        reviewer_name="Sri", budget_rs=6000000, quantity=100)
+    repository.finish_run(conn, run_id, status="Evaluated", total_tokens=900, total_cost_usd=0.02, duration_seconds=12.5)
+    run = repository.get_run(conn, run_id)
+    assert run == repository.RunRecord(
+        rfp_run_id=run_id, created_at="2026-10-23T09:30:00+00:00", status="Evaluated", provider="OpenAI", model="gpt-4o-mini",
+        temperature=0, template_id=repository.DEFAULT_TEMPLATE_ID,
+        criteria_snapshot=[{"criterion_id": 1, "name": "Technical Capability", "weight": 30, "max_score": 10}],
+        reviewer_name="Sri", total_tokens=900, total_cost_usd=0.02, duration_seconds=12.5, budget_rs=6000000, quantity=100)
+
+
+def test_an_unknown_run_is_none_and_a_run_without_budget_reads_back_empty(conn: sqlite3.Connection) -> None:
+    assert repository.get_run(conn, "RUN-NOPE") is None
+    older = repository.get_run(conn, _add_run(conn))   # saved before F09: no budget, quantity, model or reviewer
+    assert older is not None and (older.budget_rs, older.quantity, older.model, older.criteria_snapshot) == (None, None, None, [])
+
+
+def test_a_damaged_criteria_snapshot_reads_as_empty_not_as_an_error(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    conn.execute("UPDATE rfp_runs SET criteria_snapshot_json = ? WHERE rfp_run_id = ?", ("{not json", run_id))
+    assert repository.get_run(conn, run_id).criteria_snapshot == []   # type: ignore[union-attr]
+    conn.execute("UPDATE rfp_runs SET criteria_snapshot_json = ? WHERE rfp_run_id = ?", ('{"a": 1}', run_id))
+    assert repository.get_run(conn, run_id).criteria_snapshot == []   # type: ignore[union-attr]
+
+
+def test_suppliers_come_back_best_rank_first_with_their_result_opened_up(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    # the names are in the opposite order to the ranks, so sorting by name would give the wrong answer
+    _save(conn, run_id, "Alpha", 3, passed=False, result_json='{"eligible": false}', rating=None, when="2026-10-09")
+    _save(conn, run_id, "Zulu", 1, result_json='{"gates": {"warranty": "pass"}}')
+    _save(conn, run_id, "Mike", 2, result_json='{"tie_break_explanation": "Mike above Alpha: x"}', rating=5)
+    found = repository.list_supplier_results(conn, run_id)
+    assert [s.supplier_name for s in found] == ["Zulu", "Mike", "Alpha"]
+    first, second, third = found
+    assert first == repository.StoredSupplier("Zulu", date(2026, 10, 5), 3, 70.5, 80.25, 61.0, 1, True, {"gates": {"warranty": "pass"}})
+    assert second.experience_rating == 5 and second.result == {"tie_break_explanation": "Mike above Alpha: x"}
+    assert (third.experience_rating, third.gates_passed, third.submission_date) == (None, False, date(2026, 10, 9))
+
+
+def test_only_the_suppliers_of_that_run_are_returned(conn: sqlite3.Connection) -> None:
+    one, two = _start_run(conn, "RUN-ONE"), _start_run(conn, "RUN-TWO")
+    _save(conn, one, "A", 1)
+    _save(conn, two, "B", 1)
+    assert [s.supplier_name for s in repository.list_supplier_results(conn, one)] == ["A"]
+    assert repository.list_supplier_results(conn, "RUN-NOPE") == []
+
+
+@pytest.mark.parametrize("stored", ["", "{broken", "[1, 2]", '"text"'])
+def test_a_result_that_cannot_be_read_comes_back_as_an_empty_mapping(conn: sqlite3.Connection, stored: str) -> None:
+    run_id = _start_run(conn)
+    _save(conn, run_id, "A", 1, result_json=stored)
+    assert repository.list_supplier_results(conn, run_id)[0].result == {}

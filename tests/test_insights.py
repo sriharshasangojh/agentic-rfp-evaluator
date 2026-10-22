@@ -1,4 +1,4 @@
-"""Tests for tools/insights.py (spec 9.6 and 16.1): strength labels. Pros/cons and the rest come in later features."""
+"""Tests for tools/insights.py: strength labels (spec 9.6) and the recommendation (spec 10.2). Pros/cons and the rest come in later features."""
 from __future__ import annotations
 
 import ast
@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.insights import AVERAGE, STRONG, WEAK, strength_label
+from tools.insights import (AVERAGE, INDUSTRY_WARNING_BELOW, STRONG, WEAK, Contender, Recommendation,
+                            choose_recommendation, industry_warning, strength_label)
 
 
 def test_the_spec_examples():
@@ -50,6 +51,72 @@ def test_a_maximum_of_zero_or_less_is_refused(bad_max):
 def test_the_label_follows_a_changed_score():
     assert strength_label(4, 10) == WEAK
     assert strength_label(8.5, 10) == STRONG  # e.g. after a human override
+
+
+# ---------------------------------------------------------------- the recommendation (spec 10.2)
+
+def contenders(*spec: tuple[str, int, bool]) -> list[Contender]:
+    return [Contender(name, rank, eligible) for name, rank, eligible in spec]
+
+
+def test_the_recommended_supplier_is_the_top_ranked_one_when_it_passes_every_check():
+    result = choose_recommendation(contenders(("Apex", 1, True), ("Nexa", 2, True), ("Orbit", 3, True)))
+    assert result == Recommendation(recommended="Apex", runner_up="Nexa", top_ranked="Apex")
+    assert not result.none_eligible
+
+
+def test_a_supplier_that_fails_a_check_is_skipped_even_when_it_ranks_first():
+    result = choose_recommendation(contenders(("Vertexa", 1, False), ("Apex", 2, True), ("Nexa", 3, True)))
+    assert (result.recommended, result.runner_up, result.top_ranked) == ("Apex", "Nexa", "Vertexa")
+
+
+def test_the_runner_up_is_the_next_eligible_supplier_not_the_next_rank():
+    result = choose_recommendation(contenders(("Apex", 1, True), ("BrightPath", 2, False), ("Nexa", 3, True)))
+    assert (result.recommended, result.runner_up) == ("Apex", "Nexa")
+
+
+def test_with_one_eligible_supplier_there_is_no_runner_up():
+    result = choose_recommendation(contenders(("Apex", 1, False), ("Nexa", 2, True), ("Orbit", 3, False)))
+    assert (result.recommended, result.runner_up) == ("Nexa", None)
+
+
+def test_when_nobody_is_eligible_nobody_is_recommended_and_the_top_ranked_is_named():
+    result = choose_recommendation(contenders(("Apex", 1, False), ("Nexa", 2, False)))
+    assert (result.recommended, result.runner_up, result.top_ranked) == (None, None, "Apex")
+    assert result.none_eligible
+
+
+def test_one_supplier_can_be_recommended_and_has_no_runner_up():
+    assert choose_recommendation(contenders(("Solo", 1, True))) == Recommendation("Solo", None, "Solo")
+    assert choose_recommendation(contenders(("Solo", 1, False))).none_eligible
+
+
+def test_the_order_of_the_list_does_not_matter_only_the_rank():
+    shuffled = contenders(("Orbit", 3, True), ("Apex", 1, True), ("Nexa", 2, True))
+    assert choose_recommendation(shuffled) == Recommendation("Apex", "Nexa", "Apex")
+
+
+def test_no_suppliers_gives_no_recommendation_and_is_not_a_none_eligible_case():
+    result = choose_recommendation([])
+    assert result == Recommendation(None, None, None)
+    assert not result.none_eligible
+
+
+def test_the_industry_warning_starts_below_60():
+    assert INDUSTRY_WARNING_BELOW == 60
+    assert industry_warning(59.99, ["Warranty"]) == "Below industry standard on: Warranty"
+    assert industry_warning(60, ["Warranty"]) is None
+    assert industry_warning(60.01, ["Warranty"]) is None
+    assert industry_warning(100, []) is None
+
+
+def test_the_industry_warning_lists_the_weak_attributes_in_the_order_given():
+    assert industry_warning(21.25, ["Unit price", "Repair time", "Data wiping"]) == (
+        "Below industry standard on: Unit price, Repair time, Data wiping")
+
+
+def test_the_industry_warning_still_works_when_no_attribute_is_named():
+    assert industry_warning(10, []) == "Below industry standard on: several attributes"
 
 
 def test_insights_module_stays_pure():

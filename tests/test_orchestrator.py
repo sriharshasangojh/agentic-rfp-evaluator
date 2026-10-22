@@ -446,6 +446,24 @@ def test_gates_decide_eligibility_and_say_why():
     assert detail["eligible"] is False and detail["gates"]["warranty"] == "fail" and detail["gates"]["delivery"] == "pass"
 
 
+def test_the_saved_result_has_the_gate_and_industry_details_the_overview_reads():
+    run()
+    detail = json.loads(rows("SELECT result_json FROM supplier_results WHERE supplier_name = 'BrightPath Tech'")[0][0])
+    failed = [(g["name"], g["reason"]) for g in detail["gate_details"] if not g["passed"]]
+    assert failed == [("Warranty", "1 year (at least 3 required)"), ("Certification", "Not stated")]
+    assert set(detail["gate_details"][0]) == {"gate_id", "name", "passed", "reason"}
+    attributes = detail["industry_breakdown"]["attributes"]
+    assert set(attributes[0]) == {"attribute_key", "label", "grade", "points", "weight", "reason"}
+    assert {a["grade"] for a in attributes} <= {industry.ABOVE, industry.MEETS, industry.BELOW, industry.NOT_STATED}
+    assert detail["evaluation_failed"] is False
+
+
+def test_dates_and_ratings_are_written_the_same_way_on_every_leaderboard():
+    assert orchestrator.format_submitted(date(2026, 10, 5)) == "5 Oct 2026"
+    assert orchestrator.format_submitted(date(2026, 12, 31)) == "31 Dec 2026"
+    assert [orchestrator.format_experience(r) for r in (None, 1, 4)] == ["Not rated", "1", "4"]
+
+
 def test_a_supplier_that_fails_a_gate_is_still_ranked():
     result, _, _ = run()
     assert [s.rank for s in result.suppliers] == [1, 2, 3, 4, 5] and result.suppliers[-1].name == "BrightPath Tech"
