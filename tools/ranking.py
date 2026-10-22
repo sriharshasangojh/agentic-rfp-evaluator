@@ -30,7 +30,7 @@ class SupplierInput:
 
     name: str
     submission_date: date
-    experience_rating: int
+    experience_rating: int | None  # 1 to 5, or None when the buyer did not rate this supplier
     scores: Mapping[int, float]  # criterion_id -> validated score
 
 
@@ -52,7 +52,7 @@ class SupplierRanking:
     rank: int
     name: str
     submission_date: date
-    experience_rating: int
+    experience_rating: int | None
     absolute_score: float  # 0-100
     ppi: float             # Peer score, 0-100
     criteria: tuple[CriterionResult, ...]
@@ -110,6 +110,15 @@ def _check_inputs(suppliers: Sequence[SupplierInput], criteria: Sequence[Criteri
                 )
 
 
+def _rating_text(rating: int | None) -> str:
+    return "not rated" if rating is None else str(rating)
+
+
+def _rating_for_sorting(rating: int | None) -> int:
+    """A supplier without a rating comes after every rated one (below the lowest rating, 1)."""
+    return 0 if rating is None else rating
+
+
 def _tie_break_reason(upper: SupplierRanking, lower: SupplierRanking) -> str:
     """Which rule put `upper` above `lower` when their Peer scores are equal (the order of section 9.3)."""
     if upper.submission_date != lower.submission_date:
@@ -118,7 +127,7 @@ def _tie_break_reason(upper: SupplierRanking, lower: SupplierRanking) -> str:
             f"vs {lower.submission_date.isoformat()})"
         )
     if upper.experience_rating != lower.experience_rating:
-        return f"higher experience rating ({upper.experience_rating} vs {lower.experience_rating})"
+        return f"higher experience rating ({_rating_text(upper.experience_rating)} vs {_rating_text(lower.experience_rating)})"
     return f"supplier name comes first alphabetically ({upper.name} vs {lower.name})"
 
 
@@ -129,6 +138,7 @@ def rank_suppliers(suppliers: Sequence[SupplierInput], criteria: Sequence[Criter
     Relative % = score / benchmark * 100 (100 for everyone when the benchmark is 0).
     PPI = sum(relative % * weight) / sum(weight). Both scores are rounded to 2 decimals *before* sorting,
     then suppliers are ordered by: higher PPI, earlier submission date, higher experience rating, name A to Z.
+    The rating is optional: at that step a supplier without one comes after every rated supplier.
     """
     _check_inputs(suppliers, criteria)
     if not suppliers:
@@ -187,7 +197,7 @@ def rank_suppliers(suppliers: Sequence[SupplierInput], criteria: Sequence[Criter
             )
         )
 
-    ordered = sorted(unranked, key=lambda r: (-r.ppi, r.submission_date, -r.experience_rating, r.name.lower()))
+    ordered = sorted(unranked, key=lambda r: (-r.ppi, r.submission_date, -_rating_for_sorting(r.experience_rating), r.name.lower()))
     ranked = tuple(
         SupplierRanking(
             rank=position,

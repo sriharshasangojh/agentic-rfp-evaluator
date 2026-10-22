@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS rfp_runs (
     reviewer_name          TEXT,
     total_tokens           INTEGER,
     total_cost_usd         REAL,
-    duration_seconds       REAL
+    duration_seconds       REAL,
+    budget_rs              REAL,      -- the buyer's total budget for this run (added in F09; older databases get it by migration)
+    quantity               INTEGER    -- the number of units being bought in this run (added in F09)
 );
 
 CREATE TABLE IF NOT EXISTS run_documents (
@@ -100,7 +102,7 @@ CREATE TABLE IF NOT EXISTS supplier_results (
     rfp_run_id        TEXT    NOT NULL REFERENCES rfp_runs (rfp_run_id),
     supplier_name     TEXT    NOT NULL,
     submission_date   TEXT    NOT NULL,
-    experience_rating INTEGER NOT NULL CHECK (experience_rating BETWEEN 1 AND 5),
+    experience_rating INTEGER CHECK (experience_rating IS NULL OR experience_rating BETWEEN 1 AND 5),   -- optional (F09 round 2)
     absolute_score    REAL    NOT NULL,
     ppi               REAL    NOT NULL,
     industry_score    REAL    NOT NULL,

@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Protocol
 
 from llm import client
@@ -91,6 +91,7 @@ class EvaluationOutcome:
     tokens: int | None
     cost_usd: float | None
     name_replacements: int
+    raw_reply: str = ""                     # the model's last reply exactly as received (stored by the orchestrator, F09)
 
 
 # ---------------------------------------------------------------- blind naming
@@ -279,6 +280,7 @@ def evaluate_supplier(
         tokens=_total(tokens),   # type: ignore[arg-type]
         cost_usd=_total(costs),  # type: ignore[arg-type]
         name_replacements=prompt.name_replacements,
+        raw_reply=result.text,
     )
 
 
@@ -307,7 +309,8 @@ def render_outcome(outcome: EvaluationOutcome, criteria: Sequence[PromptCriterio
     return "\n".join(lines)
 
 
-def _title_from_filename(path: Path) -> str:
+def title_from_filename(path: Path | PurePath) -> str:
+    """'apex_systems.pdf' -> 'Apex Systems' (the name suggested for a file)."""
     return " ".join(word.capitalize() for word in re.split(r"[_\-\s]+", path.stem) if word)
 
 
@@ -339,7 +342,7 @@ def _main(
         seed.ensure_database()
         with repository.connection() as conn:
             criteria = repository.list_criteria(conn, active_only=True)
-        supplier = args.supplier or _title_from_filename(args.pdf)
+        supplier = args.supplier or title_from_filename(args.pdf)
         if args.show_prompt:
             prompt = build_prompt(supplier, pdf.text, criteria, terms)
             out(f"The real name '{supplier}' was hidden {prompt.name_replacements} times. Messages that would be sent:\n")

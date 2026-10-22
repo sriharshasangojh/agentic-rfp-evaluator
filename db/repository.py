@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -82,9 +83,50 @@ def connection(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Columns added after the first version of the schema. `CREATE TABLE IF NOT EXISTS` leaves an existing table
+# alone, so a database made by an older version gets these through `_add_missing_columns`.
+_ADDED_COLUMNS = (
+    ("rfp_runs", "budget_rs", "REAL"),
+    ("rfp_runs", "quantity", "INTEGER"),
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, column, kind in _ADDED_COLUMNS:   # constants only, never user input
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+
+
+def _make_rating_optional(conn: sqlite3.Connection, schema_text: str) -> None:
+    """The experience rating became optional in F09 round 2. A database made earlier has the column as NOT NULL, and
+    SQLite cannot relax that in place, so the table is rebuilt (same rows) in one transaction."""
+    column = next((row for row in conn.execute("PRAGMA table_info(supplier_results)") if row[1] == "experience_rating"), None)
+    if column is None or not column[3]:   # row[3] is 1 when the column is NOT NULL
+        return
+    match = re.search(r"CREATE TABLE IF NOT EXISTS supplier_results \(.*?\n\);", schema_text, re.DOTALL)
+    if match is None:
+        raise sqlite3.DatabaseError("The supplier_results definition was not found in schema.sql.")
+    names = "rfp_run_id, supplier_name, submission_date, experience_rating, absolute_score, ppi, industry_score, final_rank, gates_passed, result_json"
+    conn.commit()
+    conn.execute("BEGIN")
+    try:
+        conn.execute("ALTER TABLE supplier_results RENAME TO supplier_results_old")
+        conn.execute(match.group(0).replace("IF NOT EXISTS ", ""))
+        conn.execute(f"INSERT INTO supplier_results ({names}) SELECT {names} FROM supplier_results_old")
+        conn.execute("DROP TABLE supplier_results_old")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Create every table, index and trigger that does not exist yet."""
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    """Create every table, index and trigger that does not exist yet, and bring an older database up to date."""
+    schema_text = SCHEMA_PATH.read_text(encoding="utf-8")
+    conn.executescript(schema_text)
+    _add_missing_columns(conn)
+    _make_rating_optional(conn, schema_text)
 
 
 def get_template(conn: sqlite3.Connection, template_id: str = DEFAULT_TEMPLATE_ID) -> Template | None:
@@ -140,3 +182,115 @@ def weights_are_valid(total: float) -> bool:
     """True when the active weights add up to 100 (within a tolerance of 0.01)."""
     # Rounded first: 100.01 - 100.0 is 0.010000000000005 in floating point, which would wrongly fail.
     return round(abs(total - WEIGHT_TOTAL), 6) <= WEIGHT_TOLERANCE
+
+
+# ---------------------------------------------------------------- evaluation runs (F09)
+
+RUN_RUNNING = "Running"
+RUN_EVALUATED = "Evaluated"
+RUN_FAILED = "Failed"
+RUN_INTERRUPTED = "Interrupted"
+
+
+@dataclass(frozen=True)
+class AttemptRow:
+    """One criterion's result inside one evaluation attempt. `evidence_found` stays None until the evidence check (F15)."""
+
+    criterion_id: int
+    score: float
+    justification: str
+    evidence: str
+    evidence_found: bool | None = None
+    raw_json: str | None = None
+
+
+def create_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    created_at: str,
+    provider: str,
+    model: str,
+    temperature: float,
+    template_id: str,
+    criteria_snapshot_json: str,
+    reviewer_name: str,
+    budget_rs: float,
+    quantity: int,
+    status: str = RUN_RUNNING,
+) -> None:
+    """Start a run. The API key is never a parameter here: it is not stored anywhere."""
+    conn.execute(
+        "INSERT INTO rfp_runs (rfp_run_id, created_at, status, provider, model, temperature, template_id, "
+        "criteria_snapshot_json, reviewer_name, budget_rs, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, created_at, status, provider, model, temperature, template_id, criteria_snapshot_json,
+         reviewer_name, budget_rs, quantity),
+    )
+
+
+def set_run_status(conn: sqlite3.Connection, run_id: str, status: str) -> None:
+    conn.execute("UPDATE rfp_runs SET status = ? WHERE rfp_run_id = ?", (status, run_id))
+
+
+def finish_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    status: str,
+    total_tokens: int | None,
+    total_cost_usd: float | None,
+    duration_seconds: float,
+) -> None:
+    conn.execute(
+        "UPDATE rfp_runs SET status = ?, total_tokens = ?, total_cost_usd = ?, duration_seconds = ? WHERE rfp_run_id = ?",
+        (status, total_tokens, total_cost_usd, duration_seconds, run_id),
+    )
+
+
+def add_document(conn: sqlite3.Connection, run_id: str, supplier_name: str, file_name: str, sha256: str, pages: int) -> None:
+    conn.execute(
+        "INSERT INTO run_documents (rfp_run_id, supplier_name, file_name, sha256, pages) VALUES (?, ?, ?, ?, ?)",
+        (run_id, supplier_name, file_name, sha256, pages),
+    )
+
+
+def add_attempt(
+    conn: sqlite3.Connection,
+    run_id: str,
+    supplier_name: str,
+    attempt_no: int,
+    rows: Sequence[AttemptRow],
+    created_at: str,
+) -> None:
+    """Store every criterion of one evaluation attempt. Attempts are only ever added, never changed."""
+    conn.executemany(
+        "INSERT INTO evaluation_attempts (rfp_run_id, supplier_name, attempt_no, criterion_id, score, justification, "
+        "evidence, evidence_found, raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (run_id, supplier_name, attempt_no, r.criterion_id, r.score, r.justification, r.evidence,
+             None if r.evidence_found is None else int(r.evidence_found), r.raw_json, created_at)
+            for r in rows
+        ],
+    )
+
+
+def save_supplier_result(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    supplier_name: str,
+    submission_date: str,
+    experience_rating: int | None,
+    absolute_score: float,
+    ppi: float,
+    industry_score: float,
+    final_rank: int,
+    gates_passed: bool,
+    result_json: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO supplier_results (rfp_run_id, supplier_name, submission_date, experience_rating, absolute_score, "
+        "ppi, industry_score, final_rank, gates_passed, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, supplier_name, submission_date, experience_rating, absolute_score, ppi, industry_score,
+         final_rank, int(gates_passed), result_json),
+    )

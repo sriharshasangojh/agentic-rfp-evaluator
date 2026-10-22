@@ -143,6 +143,37 @@ def test_name_breaks_a_tie_when_ppi_date_and_experience_are_equal_ignoring_case(
     )
 
 
+def test_a_supplier_without_a_rating_comes_after_every_rated_one_when_the_rest_ties():
+    suppliers = [
+        supplier("Alpha", (6,), "2026-10-05", None, one_criterion()),
+        supplier("Beta", (6,), "2026-10-05", 1, one_criterion()),   # even the lowest rating beats no rating
+    ]
+    result = rank_suppliers(suppliers, one_criterion())
+    assert [r.name for r in result.suppliers] == ["Beta", "Alpha"]
+    assert [r.experience_rating for r in result.suppliers] == [1, None]
+    assert result.tie_break_explanations == ("Beta above Alpha: higher experience rating (1 vs not rated)",)
+
+
+def test_two_unrated_suppliers_are_ordered_by_name_and_the_explanation_says_so():
+    suppliers = [
+        supplier("Zeta", (6,), "2026-10-05", None, one_criterion()),
+        supplier("Alpha", (6,), "2026-10-05", None, one_criterion()),
+    ]
+    result = rank_suppliers(suppliers, one_criterion())
+    assert [r.name for r in result.suppliers] == ["Alpha", "Zeta"]
+    assert result.tie_break_explanations == ("Alpha above Zeta: supplier name comes first alphabetically (Alpha vs Zeta)",)
+
+
+def test_a_missing_rating_never_overrides_the_score_or_the_date():
+    suppliers = [
+        supplier("Rated", (4,), "2026-10-05", 5, one_criterion()),
+        supplier("Unrated", (9,), "2026-10-05", None, one_criterion()),   # better score wins
+        supplier("UnratedEarly", (4,), "2026-10-01", None, one_criterion()),   # earlier date wins before the rating is looked at
+    ]
+    result = rank_suppliers(suppliers, one_criterion())
+    assert [r.name for r in result.suppliers] == ["Unrated", "UnratedEarly", "Rated"]
+
+
 def test_no_explanation_when_nobody_ties():
     suppliers = [
         supplier("Alpha", (9,), "2026-10-05", 3, one_criterion()),

@@ -170,3 +170,128 @@ def test_audit_log_refuses_secrets(conn: sqlite3.Connection, details: dict) -> N
 def test_audit_log_needs_an_existing_run(conn: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         audit.log_event(conn, "RUN-DOES-NOT-EXIST", "system", "run_created")
+
+
+# --- runs: columns, migration and the write functions (F09) -----------------------------------------
+
+def _start_run(connection: sqlite3.Connection, run_id: str = "RUN-TEST-0002") -> str:
+    repository.create_run(
+        connection, run_id=run_id, created_at="2026-10-23T00:00:00+00:00", provider="OpenAI", model="m",
+        temperature=0, template_id=repository.DEFAULT_TEMPLATE_ID, criteria_snapshot_json="[]",
+        reviewer_name="Sri", budget_rs=6000000, quantity=100,
+    )
+    return run_id
+
+
+def test_runs_keep_the_budget_and_quantity(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    row = conn.execute("SELECT * FROM rfp_runs WHERE rfp_run_id = ?", (run_id,)).fetchone()
+    assert (row["status"], row["budget_rs"], row["quantity"], row["reviewer_name"]) == ("Running", 6000000, 100, "Sri")
+    assert (row["provider"], row["model"], row["temperature"]) == ("OpenAI", "m", 0)
+
+
+def test_an_older_database_gets_the_new_columns_and_keeps_its_rows(conn: sqlite3.Connection) -> None:
+    _add_run(conn)   # a run with no budget or quantity, as older versions stored them
+    conn.execute("ALTER TABLE rfp_runs DROP COLUMN budget_rs")
+    conn.execute("ALTER TABLE rfp_runs DROP COLUMN quantity")
+    assert "budget_rs" not in {r[1] for r in conn.execute("PRAGMA table_info(rfp_runs)")}
+    repository.create_schema(conn)
+    repository.create_schema(conn)   # and again: nothing breaks
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(rfp_runs)")}
+    assert {"budget_rs", "quantity"} <= columns
+    kinds = {r[1]: r[2] for r in conn.execute("PRAGMA table_info(rfp_runs)")}
+    assert (kinds["budget_rs"], kinds["quantity"]) == ("REAL", "INTEGER")   # the same types a new database has
+    row = conn.execute("SELECT * FROM rfp_runs WHERE rfp_run_id = 'RUN-TEST-0001'").fetchone()
+    assert row["status"] == "Evaluated" and row["budget_rs"] is None and row["quantity"] is None
+
+
+def test_finishing_a_run_stores_the_totals(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    repository.finish_run(conn, run_id, status="Evaluated", total_tokens=12345, total_cost_usd=0.5, duration_seconds=61.5)
+    row = conn.execute("SELECT * FROM rfp_runs WHERE rfp_run_id = ?", (run_id,)).fetchone()
+    assert (row["status"], row["total_tokens"], row["total_cost_usd"], row["duration_seconds"]) == ("Evaluated", 12345, 0.5, 61.5)
+    repository.set_run_status(conn, run_id, "Failed")
+    assert conn.execute("SELECT status FROM rfp_runs WHERE rfp_run_id = ?", (run_id,)).fetchone()[0] == "Failed"
+
+
+def test_documents_attempts_and_results_are_stored_under_the_run(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    repository.add_document(conn, run_id, "Apex Systems", "apex_systems.pdf", "ab" * 32, 6)
+    repository.add_attempt(conn, run_id, "Apex Systems", 1, [
+        repository.AttemptRow(1, 9.0, "why", "quote (Page 2)", None, "{}"),
+        repository.AttemptRow(2, 7.5, "why 2", "Not stated in the proposal", True),
+        repository.AttemptRow(3, 0.0, "why 3", "Not stated in the proposal", False),
+    ], "2026-10-23T00:00:01+00:00")
+    repository.save_supplier_result(
+        conn, run_id=run_id, supplier_name="Apex Systems", submission_date="2026-10-05", experience_rating=4,
+        absolute_score=77.0, ppi=86.94, industry_score=60.0, final_rank=1, gates_passed=True, result_json="{}")
+    assert conn.execute("SELECT pages, sha256 FROM run_documents").fetchone()[:] == (6, "ab" * 32)
+    rows = conn.execute("SELECT criterion_id, score, evidence_found, raw_json FROM evaluation_attempts ORDER BY criterion_id").fetchall()
+    assert [tuple(r) for r in rows] == [(1, 9.0, None, "{}"), (2, 7.5, 1, None), (3, 0.0, 0, None)]
+    result = conn.execute("SELECT * FROM supplier_results").fetchone()
+    assert (result["final_rank"], result["gates_passed"], result["ppi"]) == (1, 1, 86.94)
+
+
+def test_run_data_needs_an_existing_run(conn: sqlite3.Connection) -> None:
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.add_document(conn, "RUN-NOPE", "A", "a.pdf", "x", 1)
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.add_attempt(conn, "RUN-NOPE", "A", 1, [repository.AttemptRow(1, 1.0, "w", "e")], "t")
+
+
+def test_the_same_supplier_cannot_be_saved_twice_in_one_run(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    kwargs = dict(run_id=run_id, supplier_name="A", submission_date="2026-10-05", experience_rating=3, absolute_score=1.0,
+                  ppi=1.0, industry_score=1.0, final_rank=1, gates_passed=False, result_json="{}")
+    repository.save_supplier_result(conn, **kwargs)
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.save_supplier_result(conn, **kwargs)
+
+
+def _result_kwargs(run_id: str, name: str = "A", rating: int | None = 3) -> dict:
+    return dict(run_id=run_id, supplier_name=name, submission_date="2026-10-05", experience_rating=rating, absolute_score=1.0,
+                ppi=1.0, industry_score=1.0, final_rank=1, gates_passed=False, result_json="{}")
+
+
+def test_the_experience_rating_is_optional_but_must_be_1_to_5_when_given(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    repository.save_supplier_result(conn, **_result_kwargs(run_id, "Unrated", None))
+    repository.save_supplier_result(conn, **_result_kwargs(run_id, "Rated", 5))
+    stored = {r["supplier_name"]: r["experience_rating"] for r in conn.execute("SELECT * FROM supplier_results")}
+    assert stored == {"Unrated": None, "Rated": 5}
+    for bad in (0, 6):
+        with pytest.raises(sqlite3.IntegrityError):
+            repository.save_supplier_result(conn, **_result_kwargs(run_id, f"Bad{bad}", bad))
+
+
+def test_a_database_that_still_requires_the_rating_is_rebuilt_without_losing_rows(conn: sqlite3.Connection) -> None:
+    run_id = _start_run(conn)
+    conn.execute("DROP TABLE supplier_results")
+    conn.execute(
+        "CREATE TABLE supplier_results (rfp_run_id TEXT NOT NULL REFERENCES rfp_runs (rfp_run_id), supplier_name TEXT NOT NULL, "
+        "submission_date TEXT NOT NULL, experience_rating INTEGER NOT NULL CHECK (experience_rating BETWEEN 1 AND 5), "
+        "absolute_score REAL NOT NULL, ppi REAL NOT NULL, industry_score REAL NOT NULL, final_rank INTEGER NOT NULL, "
+        "gates_passed INTEGER NOT NULL CHECK (gates_passed IN (0, 1)), result_json TEXT NOT NULL, PRIMARY KEY (rfp_run_id, supplier_name))")
+    conn.execute("INSERT INTO supplier_results VALUES (?, 'Old', '2026-10-05', 4, 77.0, 86.94, 36.25, 1, 1, '{\"kept\": true}')", (run_id,))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO supplier_results VALUES (?, 'New', '2026-10-05', NULL, 1, 1, 1, 2, 0, '{}')", (run_id,))
+
+    repository.create_schema(conn)
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    repository.create_schema(conn)   # a second time changes nothing: the table is not rebuilt again
+    conn.set_trace_callback(None)
+    assert not [s for s in statements if "supplier_results" in s and ("RENAME" in s.upper() or "DROP" in s.upper())]
+
+    column = next(r for r in conn.execute("PRAGMA table_info(supplier_results)") if r[1] == "experience_rating")
+    assert column[3] == 0   # no longer NOT NULL
+    assert "supplier_results_old" not in {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+    kept = conn.execute("SELECT * FROM supplier_results").fetchall()
+    assert [tuple(r) for r in kept] == [(run_id, "Old", "2026-10-05", 4, 77.0, 86.94, 36.25, 1, 1, '{"kept": true}')]
+    repository.save_supplier_result(conn, **_result_kwargs(run_id, "Unrated", None))   # now allowed
+    with pytest.raises(sqlite3.IntegrityError):   # the other rules came across too
+        repository.save_supplier_result(conn, **_result_kwargs(run_id, "Old", 2))
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.save_supplier_result(conn, **_result_kwargs(run_id, "Bad", 9))
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.save_supplier_result(conn, **_result_kwargs("RUN-NOPE", "X", 3))

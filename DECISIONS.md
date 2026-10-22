@@ -458,3 +458,132 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     Verification (round 2): 73 evaluator tests (2 new). 58 deliberate breaks (3 new, on the prompt) all caught. On the
     user's machine `pytest` should report 737 passed (664 + 73). Whether the two sentences really fix the model's
     behaviour needs the user's re-run with a real key.
+
+## F09: Full run (orchestrator)
+
+112. **Where the code is.** `agents/orchestrator.py` holds the input checks, the run and the saving (no Streamlit, no
+    printing). `ui/tab_new_evaluation.py` only draws the tab and shows the result. The run follows spec section 8 up to
+    "save": input checks, create the run, read the documents, evaluate each supplier, gates, ranking, industry score,
+    strength labels, save. The evidence check (F15) and the pros/cons wording (F16) are not in yet, so
+    `evidence_found` stays empty (NULL) and `pros` / `cons` are empty lists in each supplier's saved result.
+113. **Budget and quantity are saved with the run (user request, 69).** Two new empty-allowed columns on `rfp_runs`:
+    `budget_rs` and `quantity`. A database made by F02 to F08 gets them the next time the app starts
+    (`_add_missing_columns`, safe to repeat; old runs show empty). The tab pre-fills Rs 60,00,000 and 100 and shows the
+    per-laptop figure under them. Both reach the model's requirements text, the price grade and the saved run.
+114. **Submission date and experience rating (round 1: both typed by the user, starting empty).** Replaced in round 2:
+    see 126 to 129.
+115. **Input checks (spec step 1), each a plain sentence.** 1 to 10 files; a name for every file; no duplicate names
+    (capitals and spaces ignored); every PDF readable and with text; a submission date for every file and, if a rating
+    is given, a whole number from 1 to 5 (the rating became optional in round 2, 128); at least one active criterion; active weights total 100. All problems are listed together. Fewer than
+    4 files only shows the info note. The button stays off while anything is wrong, so a blocked run cannot normally be
+    started; the same checks run again inside `run_evaluation` as a second guard (status "Blocked", nothing created).
+116. **Failure policy (my decision).** A model reply that is not valid JSON twice gives that supplier all zeros and the
+    run continues (spec 7.1). A provider problem (wrong key, no network, rate limit or timeout after the retry) stops
+    the whole run: status "Failed", a message naming the supplier, the work already saved stays saved, and nothing is
+    ranked, because a ranking that includes a supplier who was never really evaluated, or leaves one out, would mislead.
+    Any other unexpected error gives a friendly sentence with the error's type only. The audit log keeps the type and the
+    file and line where it happened, not the error's own text, because a library could put a key into that text.
+117. **A stopped run is marked "Interrupted".** If the page is closed, or the visitor clicks something while a run is
+    going, Streamlit stops the script. The run is marked "Interrupted" with an audit event and the stop is passed on.
+    To make that unlikely the uploader, the forms and the budget inputs are switched off during a run. The sidebar model
+    lock is cleared in a `finally`, so nothing stays locked.
+118. **What is saved per run.** `rfp_runs` (settings, totals), `run_documents` (file name, fingerprint, pages),
+    `evaluation_attempts` (5 rows per supplier; the model's raw reply is kept once, on the first row), `supplier_results`
+    (one row each; `result_json` holds rank, scores, gate details, every criterion with benchmark, gap, relative score,
+    strength, justification and evidence, the extracted facts, the industry breakdown, risks, warnings, the tie-break note,
+    PDF fingerprint and page count) and `audit_log` (run created, documents read, each supplier evaluated, validation
+    warnings, gate results, ranking computed, run evaluated / failed / interrupted). The proposal text itself is not saved.
+    The API key is not saved anywhere: a test searches a dump of the whole database for it.
+119. **Run ID** is `RUN-YYYYMMDD-HHMMSS-<4 hex>` in UTC, like every stored time. A visitor in India sees a time 5 hours
+    30 minutes behind their clock.
+120. **Proposal text is kept in the visitor's session only.** The tab keeps each file's extracted text in
+    `st.session_state` (`ne_pdf_cache`) so it is read once. F14 (Ask the RFP) will need that text and should read it from
+    there; after a page reload the files must be uploaded again.
+121. **Open point 82a (shared database) is still open.** On one shared link every visitor writes to the same SQLite file,
+    so run history and scorecards would be visible across visitors. For a class demo that is fine and simplest; keeping
+    runs per visitor can be done on request. Not changed.
+122. **Suppliers are evaluated one after another**, not in parallel: the step log reads in order and provider rate limits
+    are less likely. With a fast model, 7 suppliers take a few minutes at most.
+123. **Small supporting changes.** `title_from_filename` in `agents/evaluator.py` is now public (it was
+    `_title_from_filename`; two tests updated) because the tab suggests names from file names. `EvaluationOutcome`
+    carries the model's `raw_reply`. The results table on this tab is a plain table; the Overview tab (F10) will have the
+    badges and the recommendation card. The two tooltip texts for the peer and industry columns are the spec's.
+124. **The page header still says "100 business laptops" and the Meridian RFP number** (static text in `app.py`),
+    although budget and quantity can now differ per run. Not changed in F09; tell me if you want that line made
+    neutral.
+125. **Verification (round 1; see 131 for round 2).** 60 orchestrator tests, 6 new database tests, 1 new evaluator test and 8 tab tests. 55 deliberate
+    breaks to the orchestrator and the database functions: on the first pass 3 slipped through (a float rating was
+    accepted, spaces around a name were kept, a migrated column got the wrong type); the tests were tightened and all 55
+    are caught. On the user's machine `pytest` should report 812 passed (737 + 75). The 8 tab tests (AppTest) and the
+    tab itself were never run by the build agent because Streamlit cannot be installed in its workspace; the tab's logic
+    was checked against a throwaway stand-in for Streamlit. Not done: no full run with a real model yet.
+
+126. **Round 2 (user request): the date should come from the RFP response, and the rating should be optional.** The user
+    asked why they should type the submission date when it is in the proposal, and then asked to keep the experience
+    rating optional. The spec (1.3) says both are typed in the form; the user's request overrides that line. Every one of
+    the 7 sample PDFs states "Submission date: ..." on page 1, which the build agent had not checked in round 1.
+127. **The date is read from the PDF by plain text matching, no model.** `find_submission_date` in
+    `agents/orchestrator.py` looks for a label ("Submission date", "Date of submission", "Submitted on", "Date
+    submitted") and reads the date written right after it: "5 October 2026", "5th Oct, 2026", "October 5, 2026",
+    "2026-10-05", or "05/10/2026" (day first, as written in India). An impossible date (31 February) is skipped and the
+    next label is tried. A date with no label is never used, so "valid for 60 days from 5 October 2026" cannot be
+    mistaken for it. The box is pre-filled and can be changed; a date outside 2000 to 2100 is not pre-filled. When no date
+    is found the box stays empty and the run is blocked until one is picked. (Round 3 replaced the last two rules; see 132.)
+128. **The experience rating is optional.** Left empty it means "not rated": it is stored as empty (NULL), the results
+    table shows "Not rated", and it is only used as the third tie-break (after score and submission date): a rated
+    supplier, even rated 1, comes before an unrated one, and the note reads "higher experience rating (4 vs not rated)".
+    Two unrated suppliers that tie are ordered by name. A given rating must still be a whole number from 1 to 5. The
+    spec's input check "every PDF has ... experience rating" is relaxed accordingly. The tooltip gives a simple guide:
+    1 = new, no references; 3 = some relevant projects and a few references; 5 = many years, many similar projects and
+    repeat clients.
+129. **Code and database changes for 128.** `tools/ranking.py` (F03, still a pure function) accepts a missing rating
+    (type `int | None`, one small sort helper); 3 tests added to `tests/test_ranking.py`. `supplier_results.experience_rating`
+    is no longer NOT NULL (the 1 to 5 check stays). A database made earlier is rebuilt once on the next start (rename,
+    copy the rows, drop the old table, in one transaction), and a second start leaves it alone; tests cover both.
+130. **Date and rating boxes on the tab.** Each card says "Submission date read from the PDF; change it if it is wrong." or
+    "No submission date found in the PDF, so pick one." The rating box reads "Experience rating (1 to 5, optional)" and
+    shows "Not rated" until a number is chosen. Round 1's red messages for a missing date and rating no longer appear
+    when the PDF has a date. (The notes under each card were reworded in round 3: see 132.)
+131. **Verification (round 2).** 87 orchestrator tests (27 new: date finder and rating rules, including all 7 sample
+    PDFs giving the dates in the spec table), 32 ranking tests, 31 database tests, 74 evaluator tests and 10 tab tests.
+    28 more deliberate breaks (date reading, rating rules, the rebuild of the table): one slipped through on the first
+    pass (rebuilding the table on every start), a test was added, and all 28 are caught. The user's own run of this
+    round reported 846 tests, 843 passed and 3 failed (causes and fixes in 134 and 135). The tab and its 10 tests were
+    still never run by the build agent (no Streamlit here).
+132. **Round 3 (user request): the date is read and filled in for any PDF.** The user pointed out that the date box must
+    be filled for any uploaded PDF, not only for PDFs with a "Submission date:" label. `suggest_submission_date` in
+    `agents/orchestrator.py` tries three things in order, with plain text matching and no model. (1) A labelled date
+    anywhere in the file: "Submission date", "Date of submission", "Submitted on", "Date submitted", "Submitted",
+    "Proposal date", "Date of proposal/response/offer/quotation", "Response date", "Quotation/Quote/Offer date",
+    "Dated", or a line that starts with "Date:". (2) Else the first date written on page 1 that is not a validity
+    period, deadline or delivery date (a date is skipped when, earlier on its own line, there is "valid", "until",
+    "expires", "deadline", "due", "closing", "before", "issued", "issue date", "opening", "within", a "deliver" word or
+    "by"). (3) Else today's date (the visitor's browser time zone when known, otherwise this computer's date). The box
+    is therefore never empty, and the "pick a date" message no longer appears. Each card says which of the three
+    happened: "Submission date read from the PDF; change it if it is wrong.", "No submission date label found, so the first
+    date on page 1 is filled in; change it if it is wrong." or "No date found in the PDF, so today's date is filled in;
+    change it if it is wrong." Dates are understood day first (05/10/2026) and in the usual written forms ("5 October
+    2026", "5th Oct, 2026", "5-Oct-2026", "October 5, 2026", "2026-10-05"). Years 1990 to 2100 count as dates; the date box
+    accepts the same range. This replaces the "never use a date without a label" and "leave the box empty" rules of 127.
+133. **The trade-off in 132 (please read).** Filling the box for every PDF means a wrong date can be filled in silently
+    by step 2 or 3, which is why each card names the step that was used and the box stays editable. The date only
+    matters when two suppliers have exactly the same peer score (it is the second tie-break, ahead of experience), so a
+    wrong guess changes the order only in that case. A labelled date is still preferred to any guess. If you would
+    rather have the box left empty (and the run blocked) when no label is found, that is a one-line change.
+134. **The sidebar lock (found by the user's pytest run).** `tests/test_sidebar.py::test_the_model_box_is_locked_while_a_run_is_in_progress`
+    failed on the user's machine. Cause: the New evaluation tab used the shared `run_in_progress` flag to decide "run now",
+    and cleared it when the inputs were not ready, so a flag set elsewhere (as that F07 test does) was wiped. Fix: the
+    Evaluate button's callback now also sets a private `ne_run_requested` flag, the tab runs the batch only when that
+    flag is present (and removes it at once), and `run_in_progress` is set and cleared only for a run this tab started.
+    One test added to `tests/test_tab_new_evaluation.py` (the tab leaves a flag it did not set alone).
+135. **A file I forgot to deliver (my mistake).** The two other failures (two `tests/test_evaluator.py` prompt tests) were
+    because the F08 round-2 prompt sentences (DECISIONS 111) were in the build workspace copy of `prompts/evaluation_system.md`
+    but had never been copied to the user's machine. They are there now (`git diff` shows exactly the 7 added lines).
+    Check made this round: the checksums of every changed file in the build workspace were compared with the user's
+    machine, and all 8 files that tests depend on and that were not changed this round match.
+136. **Verification (round 3).** 140 orchestrator tests (53 more than round 2) and 11 tab tests (13 cases). 29 deliberate
+    breaks of the date code (first or last date, reading order, same-line context, the "delivery" word, label order, the
+    first and last year, each date format): 7 slipped through the first time, tests were added, and all 29 are now caught.
+    The tab was run only against a stand-in for Streamlit here (upload, forms, click, live log, redraw, lock released), never
+    in real Streamlit. On the user's machine `pytest` should now report 902 passed (846 from the last run + 53 orchestrator
+    + 3 tab).
