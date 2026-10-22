@@ -121,7 +121,7 @@ def check_inputs(proposals: Sequence[Proposal], criteria: Sequence[repository.Cr
 
 @dataclass(frozen=True)
 class SupplierSummary:
-    """One row of the leaderboard (the full detail is saved in `supplier_results.result_json`)."""
+    """One supplier's result, as the New evaluation tab shows it (the full detail is saved in `supplier_results.result_json`)."""
 
     rank: int
     name: str
@@ -261,28 +261,6 @@ def format_submitted(moment: date) -> str:
 def format_experience(rating: int | None) -> str:
     """The experience rating as shown on screen: the number, or 'Not rated' when the buyer left it empty."""
     return "Not rated" if rating is None else str(rating)
-
-
-LEADERBOARD_COLUMNS = ("Rank", "Supplier", "Overall /100", "Peer score (PPI)", "Industry score", "Submitted", "Experience", "Eligible")
-
-
-def leaderboard_rows(suppliers: Sequence[SupplierSummary]) -> list[dict[str, Any]]:
-    """The ranked table the screens show, one dict per supplier in rank order (spec 13.3, Overview columns)."""
-    rows: list[dict[str, Any]] = []
-    for supplier in suppliers:
-        if supplier.evaluation_failed:
-            eligible = "No: the evaluation failed (see warnings)"
-        elif supplier.eligible:
-            eligible = "Yes"
-        else:
-            eligible = "No: " + "; ".join(supplier.failed_gates)
-        rows.append({
-            "Rank": supplier.rank, "Supplier": supplier.name, "Overall /100": supplier.absolute_score,
-            "Peer score (PPI)": supplier.ppi, "Industry score": supplier.industry_score,
-            "Submitted": format_submitted(supplier.submission_date),
-            "Experience": format_experience(supplier.experience_rating),
-            "Eligible": eligible})
-    return rows
 
 
 def make_run_id(moment: datetime, token: str) -> str:

@@ -17,13 +17,15 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import pandas as pd
+import base64
+import html
+
 import streamlit as st
 
 from agents import evaluator, orchestrator
 from db import repository
 from llm import client
-from tools import industry, pdf_tool
+from tools import industry, insights, pdf_tool
 from ui import sidebar
 
 DEFAULT_BUDGET_RS = 6_000_000      # Meridian's RFP; the visitor can change it for any other purchase
@@ -181,8 +183,79 @@ def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTer
     st.rerun()
 
 
-def _leaderboard_table(result: orchestrator.RunResult) -> pd.DataFrame:
-    return pd.DataFrame(orchestrator.leaderboard_rows(result.suppliers), columns=list(orchestrator.LEADERBOARD_COLUMNS))
+# ---------------------------------------------------------------- the podium (the top three, with a wing each)
+
+# (tier, wing fill, darker edge and text colour). The darker colour keeps the tier name readable on white.
+PODIUM_TIERS = (("Gold", "#E0B53A", "#7A5C00"), ("Silver", "#C3CBD3", "#4B5563"), ("Bronze", "#CD8546", "#7E4518"))
+WINNING_TAG = "Winning RFP"
+POINTER = "The full ranking, tie-breaks and strengths are on the Overview tab; each supplier's details and warnings are on the Scorecards tab."
+_WING = ("M4 33 C3 20 10 8 24 4 C32 2 40 2 46 3 C44 6 41 8 37 9 C41 10 44 11 45 13 C41 15 37 16 33 16 "
+         "C36 17 38 19 38 21 C34 22 30 23 26 22 C28 24 29 26 28 28 C24 29 20 29 17 28 C17 30 16 32 14 33 C11 34 7 34 4 33 Z")
+_FEATHERS = "M8 30 C15 22 24 13 37 9 M11 31 C18 25 25 20 33 16 M15 32 C19 28 23 25 26 22"
+_PODIUM_CSS = (
+    ".ne-podium{margin:0.25rem 0 0.5rem 0}"
+    ".ne-place{display:flex;align-items:center;flex-wrap:wrap;gap:0.35rem 0.6rem;background:#FFFFFF;border:1px solid #C5DEDA;"
+    "border-left:5px solid var(--tier);border-radius:8px;padding:0.5rem 0.9rem;margin:0.4rem 0}"
+    ".ne-wing{width:34px;height:26px;flex:none}"
+    ".ne-tier{font-weight:700;color:var(--tier-text);white-space:nowrap}"
+    ".ne-name{font-weight:700;font-size:1.1rem;color:#0B4F4A}"
+)
+
+
+@dataclass(frozen=True)
+class Place:
+    """One step of the podium."""
+
+    rank: int
+    tier: str            # Gold, Silver or Bronze
+    fill: str
+    edge: str
+    name: str
+
+
+def _contenders(suppliers: Sequence[orchestrator.SupplierSummary]) -> list[insights.Contender]:
+    return [insights.Contender(s.name, s.rank, s.eligible) for s in suppliers]
+
+
+def podium(suppliers: Sequence[orchestrator.SupplierSummary]) -> tuple[Place, ...]:
+    """The top three by rank (fewer when fewer were evaluated). Wings follow the rank only; who wins is said by
+    `winner_note` when it is not the rank 1 supplier."""
+    ordered = sorted(suppliers, key=lambda s: s.rank)
+    return tuple(Place(s.rank, tier, fill, edge, s.name) for (tier, fill, edge), s in zip(PODIUM_TIERS, ordered))
+
+
+def winner_note(suppliers: Sequence[orchestrator.SupplierSummary]) -> str | None:
+    """A line under the podium when the winning RFP is not the rank 1 supplier, or when there is none."""
+    recommendation = insights.choose_recommendation(_contenders(sorted(suppliers, key=lambda s: s.rank)))
+    if not suppliers:
+        return None
+    if recommendation.recommended is None:
+        return "No supplier passes every mandatory check, so there is no winning RFP."
+    winner = next(s for s in suppliers if s.name == recommendation.recommended)
+    if winner.rank == 1:
+        return None
+    above = "The supplier ranked above it does" if winner.rank == 2 else "The suppliers ranked above it do"
+    return f"{WINNING_TAG}: {winner.name} (rank {winner.rank}). {above} not pass every mandatory check."
+
+
+def wing_svg(fill: str, edge: str) -> str:
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 36"><path d="{_WING}" fill="{fill}" stroke="{edge}" '
+            f'stroke-width="1.5" stroke-linejoin="round"/><path d="{_FEATHERS}" fill="none" stroke="{edge}" stroke-width="1.1" '
+            'stroke-linecap="round" opacity="0.75"/></svg>')
+
+
+def podium_html(places: Sequence[Place]) -> str:
+    """One line of HTML (Streamlit ends an HTML block at a blank line). Names are escaped; the wing is an image so it
+    looks the same on every computer (the wing emoji is missing from older Windows fonts)."""
+    rows = []
+    for p in places:
+        wing = base64.b64encode(wing_svg(p.fill, p.edge).encode("utf-8")).decode("ascii")
+        rows.append(
+            f'<div class="ne-place" style="--tier:{p.fill};--tier-text:{p.edge}">'
+            f'<span class="ne-tier">Rank {p.rank}</span>'
+            f'<img class="ne-wing" alt="{p.tier} wing" src="data:image/svg+xml;base64,{wing}">'
+            f'<span class="ne-name">{html.escape(p.name, quote=True)}</span></div>')
+    return f'<style>{_PODIUM_CSS}</style><div class="ne-podium">{"".join(rows)}</div>'
 
 
 def _show_result(result: orchestrator.RunResult) -> None:
@@ -199,21 +272,13 @@ def _show_result(result: orchestrator.RunResult) -> None:
         tokens, cost = st.columns(2)
         tokens.metric("Tokens used", "n/a" if result.tokens is None else f"{result.tokens:,}")
         cost.metric("Estimated cost (USD)", "n/a" if result.cost_usd is None else f"{result.cost_usd:.4f}")
-        st.dataframe(
-            _leaderboard_table(result), hide_index=True, width="stretch",
-            column_config={
-                "Overall /100": st.column_config.NumberColumn(format="%.2f"),
-                "Peer score (PPI)": st.column_config.NumberColumn(format="%.2f", help=PPI_HELP),
-                "Industry score": st.column_config.NumberColumn(format="%.2f", help=INDUSTRY_HELP),
-            })
-        for note in result.tie_break_explanations:
+        st.markdown("#### Top three")
+        st.markdown(podium_html(podium(result.suppliers)), unsafe_allow_html=True)
+        note = winner_note(result.suppliers)
+        if note:
             st.caption(note)
-        flagged = [(s.name, s.warnings) for s in result.suppliers if s.warnings]
-        if flagged:
-            with st.expander(f"Warnings ({sum(len(w) for _, w in flagged)})"):
-                for name, warnings in flagged:
-                    for warning in warnings:
-                        st.text(f"{name}: {warning}")
+        warnings = sum(len(s.warnings) for s in result.suppliers)
+        st.caption(POINTER + (f" {warnings} warning(s) to review there." if warnings else ""))
 
     if result.steps:
         with st.expander("Step log", expanded=result.status != repository.RUN_EVALUATED):

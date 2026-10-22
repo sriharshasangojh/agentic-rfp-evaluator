@@ -337,15 +337,14 @@ def test_the_spec_fixture_gives_the_spec_ranking_through_the_whole_pipeline():
     assert len(backend.calls) == 5
 
 
-def test_the_leaderboard_rows_follow_the_spec_columns_in_rank_order():
+def test_the_supplier_summaries_come_back_in_rank_order_with_their_scores_and_checks():
     result, _, _ = run()
-    table = orchestrator.leaderboard_rows(result.suppliers)
-    assert list(table[0]) == list(orchestrator.LEADERBOARD_COLUMNS)
-    assert table[0] == {"Rank": 1, "Supplier": "Apex Systems", "Overall /100": 77.0, "Peer score (PPI)": 86.94, "Industry score": table[0]["Industry score"],
-                        "Submitted": "5 Oct 2026", "Experience": "4", "Eligible": "Yes"}
-    assert [r["Supplier"] for r in table] == ["Apex Systems", "NexaWorks", "Horizon Datacom", "Orbit Digital", "BrightPath Tech"]
-    assert table[-1]["Eligible"] == "No: Warranty: 1 year (at least 3 required); Certification: Not stated"
-    assert table[-1]["Submitted"] == "7 Oct 2026"
+    first, last = result.suppliers[0], result.suppliers[-1]
+    assert [s.name for s in result.suppliers] == ["Apex Systems", "NexaWorks", "Horizon Datacom", "Orbit Digital", "BrightPath Tech"]
+    assert [s.rank for s in result.suppliers] == [1, 2, 3, 4, 5]
+    assert (first.absolute_score, first.ppi, first.submission_date, first.experience_rating, first.eligible) == (77.0, 86.94, date(2026, 10, 5), 4, True)
+    assert not last.eligible and last.failed_gates == ("Warranty: 1 year (at least 3 required)", "Certification: Not stated")
+    assert orchestrator.format_submitted(last.submission_date) == "7 Oct 2026"
 
 
 def test_unrated_suppliers_are_ranked_saved_and_shown_as_not_rated():
@@ -358,7 +357,7 @@ def test_unrated_suppliers_are_ranked_saved_and_shown_as_not_rated():
     assert {r[0] for r in rows("SELECT experience_rating FROM supplier_results")} == {None}
     detail = json.loads(rows("SELECT result_json FROM supplier_results WHERE supplier_name = 'Apex Systems'")[0][0])
     assert detail["experience_rating"] is None
-    assert {r["Experience"] for r in orchestrator.leaderboard_rows(result.suppliers)} == {"Not rated"}
+    assert {orchestrator.format_experience(s.experience_rating) for s in result.suppliers} == {"Not rated"}
 
 
 def test_a_rated_supplier_beats_an_unrated_one_that_ties_with_it():
@@ -366,16 +365,16 @@ def test_a_rated_supplier_beats_an_unrated_one_that_ties_with_it():
     result, _, _ = run(["Apex Systems", "NexaWorks", "Horizon Datacom"], proposals=mixed)
     assert [s.name for s in result.suppliers] == ["Horizon Datacom", "NexaWorks", "Apex Systems"]   # the two tied leaders, then Apex
     assert result.tie_break_explanations == ("Horizon Datacom above NexaWorks: higher experience rating (1 vs not rated)",)
-    table = {r["Supplier"]: r["Experience"] for r in orchestrator.leaderboard_rows(result.suppliers)}
+    table = {s.name: orchestrator.format_experience(s.experience_rating) for s in result.suppliers}
     assert table == {"Apex Systems": "4", "Horizon Datacom": "1", "NexaWorks": "Not rated"}
 
 
-def test_a_failed_evaluation_is_marked_in_the_leaderboard():
+def test_a_failed_evaluation_is_marked_in_the_summary():
     good = [ok_response(reply(n)) for n in FIVE]
     good[0:1] = [ok_response("nope"), ok_response("nope again")]
     result, _, _ = run(FIVE, *good)
-    row = next(r for r in orchestrator.leaderboard_rows(result.suppliers) if r["Supplier"] == "Apex Systems")
-    assert row["Eligible"] == "No: the evaluation failed (see warnings)" and row["Overall /100"] == 0.0
+    apex = next(s for s in result.suppliers if s.name == "Apex Systems")
+    assert apex.evaluation_failed and not apex.eligible and apex.absolute_score == 0.0
 
 
 def test_the_run_and_its_settings_are_saved():

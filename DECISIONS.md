@@ -648,3 +648,71 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     recommended supplier and the other notes keep the small grey style. Two tests added (the strip's colours and content,
     and that a name cannot inject HTML); 6 deliberate breaks of the strip, all caught. `pytest` should now report 960 passed
     (958 + 2).
+
+## F11: Scorecards tab
+
+150. **Where the code is.** `ui/tab_scorecards.py` (tests in `tests/test_tab_scorecards.py`). No other source file changed. It
+    shows the same finished run as the Overview (`shown_run_id` in the session, DECISIONS 138) and reads it back from the
+    database, so it shows exactly what was saved. Nothing is calculated here: the benchmark, gap and relative % were worked
+    out by `tools/ranking.py` when the run was saved.
+151. **The supplier picker.** One dropdown, best rank first, written "1. Zenora Systems". It starts on the recommended supplier
+    (or the top-ranked one when nobody is eligible). The widget key contains the run id, so a new run starts on its own
+    default instead of keeping the last choice.
+152. **The header.** Name, rank ("Ranked 2 of 7"), a Recommended pill when it is the pick, the Eligible / Not eligible badge
+    (hover shows the failed checks, as on the Overview), submission date, experience rating and the three scores. These come
+    from the Overview's own row, so the two tabs can never disagree.
+153. **The key-facts strip.** Five tiles in the spec's order: Total price (the unit price under it), Warranty (years, and on-site
+    or carry-in), Delivery (weeks), Battery (hours, and measured or claimed), RAM / SSD. A fact the model did not find, or
+    returned in the wrong form, shows "Not stated" in grey italics. Prices use Indian digit grouping like the rest of the app.
+    I left out the other facts the model reads (laptop model, processor, weight and so on); the spec lists five.
+154. **The score-vs-best chart.** Horizontal bars, one pair per criterion, in marks (not percentages): this supplier in the theme
+    teal and the best mark in this run in grey (#B0BEC5). The spec's blue #1565C0 was replaced by the teal because of the
+    colour scheme you chose. The axis runs from 0 to the largest maximum mark plus 8% so the number labels fit, and the hover
+    shows "7 of 10". The supplier's name is not part of the hover text (it comes from a file name). This is the app's second
+    chart of the six allowed. I could not draw it in real plotly (it cannot be installed here), so it is tested against a
+    stand-in and the real drawing is checked by the AppTest on your machine.
+155. **The criterion table.** The spec's columns (score, benchmark, gap, relative %, weight, evidence, justification) in that
+    order, with a hover help on each calculated column. The gap is shown as stored (0 for the best, negative otherwise), the
+    relative % with one decimal. The "found / not found" tick is not here: it belongs to F15. A criterion whose evidence says
+    "Not stated in the proposal" gets a "Not stated" flag, and one the model gave no mark for gets a "No result returned"
+    flag, so missing criteria are easy to spot (spec 16.3 step 4).
+156. **The industry comparison.** One row per attribute: grade (the word, always, in a colour: Above green, Meets teal, Below
+    red, Not stated grey), points, weight (its share of the 100 industry points) and the reason. A note under it gives the point
+    values and says the baseline values are planning assumptions for a fictional startup, not market research (spec 9.5).
+157. **The mandatory checks.** Every check is listed as Passed or Not passed (the word, in green or red) with its reason, so a
+    failed check can be seen without hovering. A check whose saved result is missing or unclear is shown as Not passed. This
+    only affects what is shown; eligibility still comes from the saved flag.
+158. **The warnings.** Listed exactly as saved (validation notes, the unit-price estimate, ranking notes). They are drawn in my
+    own amber box from escaped text, not with `st.warning`, because a warning can quote the model's reply and `st.warning`
+    renders Markdown (links and images). A supplier whose evaluation failed also gets a red message at the top. With no
+    warnings the tab says so.
+159. **Left for later.** The evidence tick (F15), pros and cons (F16) and price vs budget (F17). The model's overall summary and
+    risks are saved in the result but are not on this tab, because the spec's Scorecards list does not include them.
+160. **Odd saved data.** A result with parts missing shows friendly messages ("No criterion results were saved for this
+    supplier.") and numbers it cannot read show "n/a". The Overview's row-building (F10, approved) still assumes that
+    criterion ids and check entries are well formed, which they always are in runs saved by this app, so a hand-edited
+    `result_json` with junk there would stop both tabs. I did not change F10 for this.
+161. **Verification.** 76 tests (67 run in my workspace with stand-ins for Streamlit and plotly; 9 need real Streamlit and run on
+    your machine). 107 deliberate breaks of the code (78 checked by the tests, 29 of the screen code checked with a throwaway
+    script), all caught. The tests found one real bug while I wrote them (a warnings field holding plain text was read letter
+    by letter); fixed. A browser preview of the tables for Apex and Vertexa looked right. The page and the chart have not been
+    seen in real Streamlit by me. `pytest` should report 1036 passed (960 + 76).
+162. **Round 2 (user request): no second leaderboard on New evaluation.** The ranked table that F09 put under the run
+    result repeated the Overview leaderboard, so it is gone, with its tie-break notes and its warnings list (both are on the
+    Overview and Scorecards tabs). In its place is a "Top three" podium, one line per place, e.g. "Rank 1 · Gold – Zenora
+    Systems [Winning RFP] Peer score 87.78", with a small angel wing in gold, silver or bronze instead of a medal. The wing is a
+    drawn image (an SVG), not the wing emoji, because older Windows fonts do not have that emoji. Wings follow the rank; the
+    "Winning RFP" tag follows the recommendation (the highest-ranked supplier that passes every mandatory check), so a
+    top-ranked supplier that fails a check keeps its gold wing, gets a "Not eligible" badge (hover shows why) and no tag. If
+    the winner is ranked 4th or lower, or nobody passes, a line under the podium says so. The success message, run ID,
+    tokens, cost and step log stay. A line points to the Overview and Scorecards tabs (and counts the warnings). The table
+    helper `orchestrator.leaderboard_rows` is no longer used by any screen, so it was removed and its four tests now check the
+    supplier summaries directly. 9 new podium tests; 14 deliberate breaks of the podium, all caught. `pytest` should now
+    report 1045 passed (1036 + 9).
+163. **Round 3 (user request): the podium lines are only rank, wing and supplier.** Each line now reads "Rank 1, [gold
+    wing], Zenora Systems" and nothing else: no Gold / Silver / Bronze word, no peer score, no "Winning RFP" tag and no
+    "Not eligible" badge. The wing colour alone tells the place. Because the tag is gone, a line under the podium names the
+    winning RFP whenever it is not the rank 1 supplier ("Winning RFP: NexaWorks (rank 2). The supplier ranked above it does
+    not pass every mandatory check."), or says that nobody passes. The podium tests went from 9 to 7 (the tag and badge tests
+    are gone, a test now checks that the visible words are only the ranks and names); 11 deliberate breaks, all caught.
+    `pytest` should now report 1043 passed (1036 + 7).

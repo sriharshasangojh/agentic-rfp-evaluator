@@ -6,7 +6,9 @@ else (the forms, the checks, the button, the run, the saved result) is the real 
 """
 from __future__ import annotations
 
+import base64
 import json
+import re
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,6 +101,15 @@ def start() -> AppTest:
 
 def tab(app: AppTest):
     return app.tabs[1]
+
+
+def podium_shown(app: AppTest) -> str:
+    return next(str(m.value) for m in tab(app).markdown if "ne-podium" in str(m.value))
+
+
+def placed(podium_html: str) -> list[tuple[str, str, str]]:
+    """(rank, tier, supplier) for each step of the podium, top first."""
+    return re.findall(r'class="ne-tier">Rank (\d+)</span><img class="ne-wing" alt="(\w+) wing"[^>]*><span class="ne-name">([^<]+)</span>', podium_html)
 
 
 def texts(block, *kinds: str) -> str:
@@ -214,12 +225,11 @@ def test_evaluating_runs_the_batch_and_shows_the_run_id_and_the_ranking(uploaded
     assert texts(tab(app), "success").startswith("Run RUN-") and "evaluated 5 supplier(s)" in texts(tab(app), "success")
     run_id = tab(app).code[0].value
     assert run_id.startswith("RUN-") and run_id in texts(tab(app), "success")
-    table = tab(app).dataframe[0].value
-    assert table["Supplier"].tolist() == ["Apex Systems", "NexaWorks", "Horizon Datacom", "Orbit Digital", "BrightPath Tech"]
-    assert table["Rank"].tolist() == [1, 2, 3, 4, 5]
-    assert table["Overall /100"].tolist() == [77.0, 76.0, 76.0, 66.0, 48.0]
-    assert table["Peer score (PPI)"].tolist() == [86.94, 86.39, 86.39, 75.28, 55.56]
-    assert "NexaWorks above Horizon Datacom: higher experience rating (4 vs 3)" in texts(tab(app), "caption")
+    shown = podium_shown(app)
+    assert placed(shown) == [("1", "Gold", "Apex Systems"), ("2", "Silver", "NexaWorks"), ("3", "Bronze", "Horizon Datacom")]
+    assert "Orbit Digital" not in shown and "Winning RFP" not in shown and "Peer score" not in shown and "Gold" not in shown.replace('alt="Gold wing"', "")
+    assert not tab(app).dataframe   # the full ranking lives on the Overview tab only
+    assert tab_new_evaluation.POINTER in texts(tab(app), "caption")
     assert "Created run" in tab(app).code[1].value and "Saved the results" in tab(app).code[1].value   # the step log
     assert app.session_state["run_in_progress"] is False
     assert KEY not in texts(tab(app), "markdown", "caption", "code", "success", "error", "info")
@@ -233,10 +243,7 @@ def test_a_run_with_no_ratings_at_all_works_and_shows_not_rated(uploaded, monkey
     app.run()
     tab(app).button(key="ne_evaluate").click().run()
     assert not app.exception
-    table = tab(app).dataframe[0].value
-    assert table["Supplier"].tolist() == ["Apex Systems", "Horizon Datacom", "NexaWorks", "Orbit Digital", "BrightPath Tech"]
-    assert table["Experience"].tolist() == ["Not rated"] * 5
-    assert "Horizon Datacom above NexaWorks: supplier name comes first alphabetically (Horizon Datacom vs NexaWorks)" in texts(tab(app), "caption")
+    assert [name for _rank, _tier, name in placed(podium_shown(app))] == ["Apex Systems", "Horizon Datacom", "NexaWorks"]
 
 
 @needs_pdf_reader
@@ -263,3 +270,63 @@ def test_the_tab_never_clears_a_run_flag_it_did_not_start():
     app.run()
     assert not app.exception
     assert app.session_state["run_in_progress"] is True
+
+
+# ---------------------------------------------------------------- the podium (plain functions, no app needed)
+
+def summary(name: str, rank: int, *, eligible: bool = True, ppi: float = 80.0, failed: tuple[str, ...] = (),
+            evaluation_failed: bool = False, warnings: tuple[str, ...] = ()) -> orchestrator.SupplierSummary:
+    return orchestrator.SupplierSummary(rank, name, 70.0, ppi, 75.0, date(2026, 10, 5), 3, eligible, failed, evaluation_failed, warnings)
+
+
+def test_the_podium_is_the_top_three_by_rank_with_gold_silver_and_bronze():
+    places = tab_new_evaluation.podium([summary("D", 4), summary("B", 2), summary("A", 1), summary("C", 3)])
+    assert [(p.rank, p.tier, p.name) for p in places] == [(1, "Gold", "A"), (2, "Silver", "B"), (3, "Bronze", "C")]
+
+
+def test_with_fewer_than_three_suppliers_the_podium_is_shorter():
+    assert [p.tier for p in tab_new_evaluation.podium([summary("A", 1), summary("B", 2)])] == ["Gold", "Silver"]
+    assert tab_new_evaluation.podium([]) == ()
+
+
+def test_wings_follow_the_rank_even_for_a_supplier_that_fails_a_mandatory_check():
+    places = tab_new_evaluation.podium([summary("A", 1, eligible=False, failed=("Warranty: 1 year (at least 3 required)",)),
+                                        summary("B", 2), summary("C", 3)])
+    assert [(p.tier, p.name) for p in places] == [("Gold", "A"), ("Silver", "B"), ("Bronze", "C")]
+
+
+def test_the_note_names_a_winning_rfp_below_the_podium_or_says_there_is_none():
+    note = tab_new_evaluation.winner_note
+    assert note([summary("A", 1), summary("B", 2), summary("C", 3), summary("D", 4)]) is None
+    below = [summary("A", 1, eligible=False), summary("B", 2, eligible=False), summary("C", 3, eligible=False), summary("D", 4)]
+    assert note(below) == "Winning RFP: D (rank 4). The suppliers ranked above it do not pass every mandatory check."
+    assert note([summary("A", 1, eligible=False), summary("B", 2), summary("C", 3)]) == (
+        "Winning RFP: B (rank 2). The supplier ranked above it does not pass every mandatory check.")
+    assert note([summary("A", 1, eligible=False), summary("B", 2, eligible=False)]) == (
+        "No supplier passes every mandatory check, so there is no winning RFP.")
+    assert note([]) is None
+
+
+def test_each_podium_line_is_only_the_rank_the_wing_and_the_supplier():
+    text = tab_new_evaluation.podium_html(tab_new_evaluation.podium(
+        [summary("Apex Systems", 1, eligible=False, ppi=86.94, failed=("Warranty: 1 year",)), summary("NexaWorks", 2, ppi=86.39),
+         summary("Horizon Datacom", 3, ppi=86.386)]))
+    assert placed(text) == [("1", "Gold", "Apex Systems"), ("2", "Silver", "NexaWorks"), ("3", "Bronze", "Horizon Datacom")]
+    visible = re.sub(r"<style>.*?</style>|<[^>]+>", " ", text).split()
+    assert visible == ["Rank", "1", "Apex", "Systems", "Rank", "2", "NexaWorks", "Rank", "3", "Horizon", "Datacom"]
+    assert "\n" not in text and text.startswith("<style>")
+
+
+def test_each_step_has_a_wing_drawn_in_its_own_colour():
+    text = tab_new_evaluation.podium_html(tab_new_evaluation.podium([summary("A", 1), summary("B", 2), summary("C", 3)]))
+    images = re.findall(r'alt="(\w+) wing" src="data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)"', text)
+    assert [tier for tier, _data in images] == ["Gold", "Silver", "Bronze"]
+    for (tier, data), (_name, fill, edge) in zip(images, tab_new_evaluation.PODIUM_TIERS):
+        svg = base64.b64decode(data).decode("utf-8")
+        assert svg.startswith("<svg") and f'fill="{fill}"' in svg and f'stroke="{edge}"' in svg
+    assert len({fill for _t, fill, _e in tab_new_evaluation.PODIUM_TIERS}) == 3
+
+
+def test_supplier_names_cannot_inject_html_into_the_podium():
+    text = tab_new_evaluation.podium_html(tab_new_evaluation.podium([summary("<script>alert(1)</script>", 1)]))
+    assert "<script>" not in text and "&lt;script&gt;" in text
