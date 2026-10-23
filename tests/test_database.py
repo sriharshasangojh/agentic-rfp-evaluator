@@ -168,6 +168,16 @@ def test_audit_log_refuses_secrets(conn: sqlite3.Connection, details: dict) -> N
     assert _count(conn, "audit_log") == 0
 
 
+@pytest.mark.parametrize("name", ["api_key", "API_KEY", "OPENAI_API_KEY", "apikey", "client_secret", "Password", "db_password_hint"])
+def test_names_that_look_like_secrets_are_recognised(name: str) -> None:
+    assert audit.looks_like_secret_key(name)
+
+
+@pytest.mark.parametrize("name", ["provider", "model", "supplier", "warranty_years", "file_name", "keys_pressed", "tokens", 7])
+def test_ordinary_names_are_not_taken_for_secrets(name: object) -> None:
+    assert not audit.looks_like_secret_key(name)
+
+
 def test_audit_log_needs_an_existing_run(conn: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         audit.log_event(conn, "RUN-DOES-NOT-EXIST", "system", "run_created")

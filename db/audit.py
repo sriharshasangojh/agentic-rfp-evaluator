@@ -11,10 +11,15 @@ from typing import Any
 _FORBIDDEN_KEY_FRAGMENTS = ("api_key", "apikey", "secret", "password")
 
 
+def looks_like_secret_key(name: object) -> bool:
+    """True for a field name that suggests a secret ("api_key", "OPENAI_API_KEY", "password"). The JSON export uses it too."""
+    return any(fragment in str(name).lower() for fragment in _FORBIDDEN_KEY_FRAGMENTS)
+
+
 def _reject_secrets(value: Any) -> None:
     if isinstance(value, Mapping):
         for key, inner in value.items():
-            if any(fragment in str(key).lower() for fragment in _FORBIDDEN_KEY_FRAGMENTS):
+            if looks_like_secret_key(key):
                 raise ValueError(f"Refusing to write '{key}' to the audit log: secrets are never stored.")
             _reject_secrets(inner)
     elif isinstance(value, (list, tuple)):
