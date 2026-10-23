@@ -376,22 +376,22 @@ def test_the_file_name_is_the_run_id_made_safe(run_id, expected):
 # ---------------------------------------------------------------- nothing secret, nothing extra, no proposal text
 
 def test_only_the_spec_keys_are_copied_whatever_else_the_saved_result_holds():
-    result = result_for(api_key="sk-live-123", raw_reply="the whole model reply", full_text="the whole proposal", prompt="a prompt")
-    result["criteria"][0]["api_key"] = "sk-live-456"
+    result = result_for(**{"api_key": "fake-key-one"}, raw_reply="the whole model reply", full_text="the whole proposal", prompt="a prompt")
+    result["criteria"][0]["api_key"] = "fake-key-two"
     result["criteria"][0]["raw"] = "raw"
     text = A.export_text(export_of(supplier("Apex Systems", 1, result=result)))
-    for leaked in ("sk-live", "the whole model reply", "the whole proposal", "a prompt", '"raw"', "file_name", "gate_details", "filled_by_validator",
+    for leaked in ("fake-key-", "the whole model reply", "the whole proposal", "a prompt", '"raw"', "file_name", "gate_details", "filled_by_validator",
                    "overall_summary", "evaluation_failed", "tie_break_explanation\"", "pages"):
         assert leaked not in text, leaked
 
 
 def test_a_field_that_looks_like_a_secret_is_dropped_wherever_it_is_inside_the_free_form_parts():
-    facts = {"warranty_years": 3, "api_key": "sk-1", "nested": {"OPENAI_API_KEY": "sk-2", "keep": 1}, "items": [{"password": "sk-3", "ok": True}]}
-    breakdown = {"score": 70, "attributes": [{"label": "Warranty", "client_secret": "sk-4"}]}
+    facts = {"warranty_years": 3, "api_key": "fake-1", "nested": {"OPENAI_API_KEY": "fake-2", "keep": 1}, "items": [{"password": "fake-3", "ok": True}]}
+    breakdown = {"score": 70, "attributes": [{"label": "Warranty", "client_secret": "fake-4"}]}
     apex = export_of(supplier("Apex Systems", 1, facts=facts, result=result_for(facts=facts, industry_breakdown=breakdown)))["suppliers"][0]
     assert apex["extracted_facts"] == {"warranty_years": 3, "nested": {"keep": 1}, "items": [{"ok": True}]}
     assert apex["industry_breakdown"] == {"score": 70, "attributes": [{"label": "Warranty"}]}
-    assert "sk-" not in A.export_text({"suppliers": [apex]})
+    assert "fake-" not in A.export_text({"suppliers": [apex]})
 
 
 def test_values_that_are_not_plain_json_become_text():
