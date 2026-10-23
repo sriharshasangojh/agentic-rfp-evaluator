@@ -716,3 +716,83 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     not pass every mandatory check."), or says that nobody passes. The podium tests went from 9 to 7 (the tag and badge tests
     are gone, a test now checks that the visible words are only the ranks and names); 11 deliberate breaks, all caught.
     `pytest` should now report 1043 passed (1036 + 7).
+
+## R1: Readable results (change pack R1)
+
+### R1a: Overview
+
+164. **Plain labels, on screen only.** Criterion names read Laptop specs, Delivery plan, Value for money, Security and
+    Support (`insights.CRITERION_LABELS`); any other criterion name shows as itself. The Strength by criterion table, the
+    marking scheme, prompts, database and JSON export keep the real names. In R1a the plain names appear in the wording of
+    the good points and things to watch; the Scorecards use them in R1b. "Mandatory checks" is now "Must-haves" and the
+    Peer score is "Score vs other bids (PPI)" (the tooltip text is unchanged).
+165. **Must-have column names are keyed by the stored gate id, not by `rule_key`.** The pack said to key them by `rule_key`,
+    but a saved run keeps each gate's `gate_id` and `name`, not its rule key, and the pack forbids a schema change. The four
+    seeded ids map one to one to the rules: warranty = "3-yr warranty", certification = "BIS certified", price_table =
+    "Price list", delivery = "Delivery <= 8 wks" (a test checks the label table covers exactly the seeded gates). A gate
+    without a short name shows its own name. If gates ever become editable (open point 70) the short names must be derived
+    from the rule instead.
+166. **Short plain reasons for "Not eligible".** `insights.gate_problem` turns a failed must-have into a few lower-case
+    words: "warranty under 3 years", "warranty not stated", "BIS certificate not named", "no price list", "delivery over 8
+    weeks", "delivery time not stated" (the reason "Not stated" means the proposal did not say). An unknown gate gives
+    "Name: reason". A failed evaluation gives "the evaluation failed"; a supplier that is not eligible but has no details
+    saved gives "a must-have was not met". The spec's badge word "Not eligible" is kept (spec 9.3), with the short reason
+    beside it; the hover still lists the full reasons.
+167. **Verdict banner.** One bordered card whose left edge is green when everything is good, amber when there is any
+    catch, red when nobody is eligible. Heading "We recommend <name>"; one sentence built only from facts of the saved run:
+    "Ranked K of N", the names of suppliers ranked higher (they are all not eligible, by the definition of the
+    recommendation), "meets every must-have", then the price: "and fits the Rs 60 lakh budget", ", but is Rs 13.99 lakh over
+    the Rs 60 lakh budget" or ", but its price is not stated". A run saved without a budget says nothing about the budget.
+    Up to 4 pills, each with a symbol and words so that colour is never the only signal: the rank (green tick when rank 1,
+    amber warning when not), "Meets every must-have", the price pill (Within budget / Over budget by Rs X lakh / Price not
+    stated) and the industry catch "Below typical deals on: A, B (+N more)" (at most 2 names, generic wording when none is
+    named; the full warning is under Show details). Pill text is amber-brown `#8A5300` on `#FFF3E0` (contrast about 5.8:1), darker
+    than the Average cell colour, which is about 3.9:1.
+168. **Nobody eligible.** Red banner "No supplier meets every must-have" (the plain-language form of spec 10.2's "No
+    supplier meets every mandatory requirement"), a sentence naming the top-ranked supplier and what it failed, and one red
+    pill per failed must-have (up to 4).
+169. **Budget line, lakh and price facts.** "Budget for this run: Rs 60 lakh for 100 laptops" comes from the run (left out
+    for a run saved without a budget; "1 laptop" in the singular). Lakh display: at most two decimals, rounded half up on
+    the exact amount, trailing zeros dropped, and a positive amount never shows as 0 (Rs 0.01 lakh at least). The price is
+    `extracted_facts.grand_total_rs`; a total that is missing, zero, negative, text, a boolean, NaN or infinite is "not
+    stated"; a total equal to the budget is within it. The price vs budget chart stays F17.
+170. **Must-haves grid.** One row per supplier in rank order (the recommended one carries the pill), one column per
+    must-have found in the saved run (order of first appearance, best-ranked supplier first). A green tick only when the
+    saved value is exactly `True`; any other value is a red cross (fails closed). A supplier with no entry for a column shows
+    a grey dash and "Not checked" on hover; a failed evaluation shows a cross in every column with "Evaluation failed". The
+    reason is the hover text. A hint line sits under the grid; a run with no must-haves shows one line instead of an empty
+    grid.
+171. **Pros and cons (spec 10.1) are selected in Python now** (`insights.select_pros_cons`, the Python half of F16); F16 later
+    replaces only the wording. Where the spec leaves room I decided: (a) a benchmark of 0 never makes a pro, because
+    everybody is "100%" of 0; (b) "Meets every must-have" has no score to order by, so it follows the criteria pros, and
+    only when at least one must-have exists and all passed; (c) a criterion appears once among the cons (gap first, then
+    evidence, then not stated); (d) weight x score and weight x |gap| are worked out exactly (fractions), so ties keep the
+    marking-scheme order; (e) evidence not found has no effect until F15 fills `evidence_found`; (f) a failed evaluation has
+    no pros or cons. Wording (fixed Python templates, plain labels): "Strong on Security (9/10, best of all bids)" for a
+    leader with 80% or more, "Best of all bids on X (6/10)" for a leader below that, "Close to the best bid on X (9/10; best
+    bid 10/10)", "Weaker on X (5/10; best bid 8/10)", "No result for X (counted as 0/10; best bid 8/10)" when the
+    validator filled it, "Not eligible: Warranty - 1 year (at least 3 required)", "Evidence for X was not found in the
+    proposal", "X not stated in the proposal". The spec's labels "vs this batch" / "vs requirement" are shown small after
+    each item.
+172. **Why the top three.** A card for each of ranks 1 to 3 in a grid that wraps on a narrow screen: name (and the
+    Recommended pill), "Ranked N - Score vs other bids 87.78" (hover = the PPI text), a red "Not eligible: <short reason>"
+    flag, then at most 2 good points and 1 thing to watch. A failed must-have is not repeated among the points because the flag
+    already says it. A card with nothing to say says so; a failed evaluation says why there is nothing.
+173. **What moved under "Show details (full leaderboard, scores out of 100, tie-breaks)"** (closed): the run line, three
+    one-line explanations (built from the existing tooltips; the PPI one adds "This decides the ranking."), the leaderboard
+    (header "Score vs other bids (PPI)", badge "Meets must-haves" or "Not eligible" plus the short reason, tooltips
+    unchanged), the tie-break notes, the hover tip (only when somebody is not eligible), the runner-up strip, and the full
+    industry warning. The Strength by criterion table and its note are unchanged and stay visible, after the grid. The old
+    recommendation card is gone: its three big numbers are in the leaderboard, and its one-sentence reason
+    (`Overview.reason`) was dropped because the banner sentence replaces it. The pack does not list the sentence among
+    what moves, so it is not kept. The AppTest checks on the three metrics were rewritten.
+174. **Left as it was, on purpose.** `tab_overview.ELIGIBLE` still reads "Eligible" because the Scorecards header badge
+    prints it until R1b. No schema change, no new package, no LLM call, no new chart (still 2 of 6) and nothing from spec
+    Section 18: no ranking bars, stacked bars or what-if sliders (the user said the ranking bars from the mockup can be
+    revisited later).
+175. **Small hardening.** `_number` in the Overview now refuses NaN and infinity. The new readers (gate details, criteria
+    for the points) ignore anything that is not a list or a dictionary of the right shape and leave out a criterion without
+    a score, a maximum and a weight. The older F10 readers (`_strengths`, `_why_not`, `_weak_attributes`) are untouched, so
+    the limit in item 160 for hand-edited data still stands. 143 new tests (83 in `test_insights.py`, 60 in
+    `test_tab_overview.py`); 71 deliberate breaks of the new code, all caught (7 slipped through the first time and each
+    got a test). `pytest` should now report 1186 passed (1043 + 143).

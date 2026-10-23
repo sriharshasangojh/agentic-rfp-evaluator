@@ -41,6 +41,16 @@ STRENGTH_COLOURS: dict[str, tuple[str, str]] = {
 }
 
 
+# Verdict banner, pills and the must-haves grid (change pack R1): (text colour, background colour). The symbol and the
+# words always carry the meaning too, so colour is never the only signal.
+PILL_GOOD = ("#2E7D32", "#E8F5E9")
+PILL_WARN = ("#8A5300", "#FFF3E0")
+PILL_BAD = ("#C62828", "#FFEBEE")
+EDGE_GOOD = "#2E7D32"            # the coloured edge of the verdict banner
+EDGE_WARN = "#E09100"
+EDGE_BAD = "#C62828"
+
+
 def inject_theme_css() -> None:
     """Style what Streamlit's theme config can't: headings, cards, the header and the tabs.
 
