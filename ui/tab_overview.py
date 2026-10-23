@@ -35,7 +35,7 @@ STRENGTH_NOTE = ("Strong: 80% or more of the maximum mark. Average: 50% to under
                  "The score for each criterion is in brackets.")
 EVALUATION_FAILED_TEXT = "The evaluation failed (see the warnings on the Scorecards tab)."
 CHECK_FAILED_TEXT = "A must-have was not met."
-NOT_ELIGIBLE, ELIGIBLE = "Not eligible", "Eligible"      # ELIGIBLE is still what the Scorecards header badge prints
+NOT_ELIGIBLE = "Not eligible"                            # the spec's word (9.3), kept on both tabs
 MEETS_MUST_HAVES = "Meets must-haves"                     # what the badge on this tab prints for an eligible supplier
 
 DETAILS_LABEL = "Show details (full leaderboard, scores out of 100, tie-breaks)"

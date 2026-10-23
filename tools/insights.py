@@ -143,17 +143,33 @@ def gate_problem(gate_id: str, gate_name: str, reason: str) -> str:
     return known[1] if _flat(reason).lower() == _GATE_NOT_STATED else known[0]
 
 
-# ---------------------------------------------------------------- price facts
-
-LAKH = 100_000
-
-
 def _exact(value: float | int) -> Fraction:
     return Fraction(str(value))
 
 
 def _is_amount(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and abs(value) != float("inf")
+
+
+METER_DOTS = 5   # the dots in the small meter beside each criterion on a scorecard
+
+
+def meter_dots(score: object, max_score: object, dots: int = METER_DOTS) -> int | None:
+    """How many of the `dots` are filled for a mark: score / max_score x dots, rounded to the nearest whole dot.
+
+    Exactly half a dot rounds up (5 out of 10 on 5 dots is 2.5, so 3 filled), which keeps the meter in step with the strength
+    label (50% is Average, not Weak). A mark above the maximum fills every dot and a negative mark fills none. None when
+    there is no meter to draw: the mark or the maximum is missing or not a number, or the maximum is 0 or less.
+    """
+    if not _is_amount(score) or not _is_amount(max_score) or max_score <= 0:    # type: ignore[operator]
+        return None
+    share = min(max(_exact(score) / _exact(max_score), Fraction(0)), Fraction(1))   # type: ignore[arg-type]
+    return int(share * dots + Fraction(1, 2))     # the share is not negative, so int() rounds down: this is "half up"
+
+
+# ---------------------------------------------------------------- price facts
+
+LAKH = 100_000
 
 
 def format_lakh(rupees: float | int) -> str:

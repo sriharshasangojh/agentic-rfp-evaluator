@@ -1,21 +1,28 @@
-"""Tab 4: Scorecards, one supplier in detail (feature F11, spec section 13.3).
+"""Tab 4: Scorecards, one supplier in detail (feature F11, spec section 13.3; made readable by change pack R1b).
 
-The reader picks a supplier and sees: the key facts from the proposal (price, warranty, delivery, battery, RAM and SSD),
-the score against the best mark in the batch (a bar chart), every criterion with its score, benchmark, gap, relative %,
-weight, evidence and justification, the industry comparison, the mandatory checks, and the warnings. Everything is read
-back from the saved run, so what is shown is exactly what was stored. Nothing is calculated here: the benchmark, gap and
-relative % were worked out by `tools/ranking.py` when the run was saved.
+The reader picks a supplier and sees, answer first: a header card (the supplier, its rank, whether it meets every
+must-have, and its score against the other bids as one big number), five tiles with the key facts from the proposal
+(a tile turns red when the proposal does not say, or when the price is over the run's budget), what is good and what to
+watch out for, how the supplier did on each area (a 5-dot meter and a Strong / Average / Weak word), and the score
+against the best mark in the batch (a bar chart). Everything F11 showed as numbers is one click away under "Show the
+calculation": the three scores, every criterion with its score, benchmark, gap, relative %, weight, evidence and
+justification, the comparison with typical laptop deals, the must-haves and the warnings.
 
-Not on this tab yet: the "evidence found" tick or cross (F15) and the pros and cons (F16).
+Everything is read back from the saved run, so what is shown is exactly what was stored. Nothing is calculated here
+except what a reader sees as a picture: the benchmark, gap and relative % were worked out by `tools/ranking.py` when the
+run was saved, the good and bad points are chosen by `tools/insights.py`, and the dots by `insights.meter_dots`.
 
-The tables are small HTML tables, like the Overview's, because a Streamlit data table cannot colour a word or flag a
-missing criterion. Every piece of text that comes from a proposal, from the model or from the buyer goes through
+Not on this tab yet: the "evidence found" tick or cross (F15) and the model's wording of the pros and cons (F16).
+
+The tiles, cards and tables are small pieces of HTML because a Streamlit widget cannot colour a word, tint a tile or show a
+hover text on a badge. Every piece of text that comes from a proposal, from the model or from the buyer goes through
 `html.escape`, and line breaks inside it are flattened, because a blank line would end the HTML block.
 """
 from __future__ import annotations
 
 import html
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,20 +31,34 @@ import streamlit as st
 
 from agents import evaluator
 from db import repository
-from tools import industry, validator
+from tools import industry, insights, validator
 from ui import tab_overview, theme
 from ui.tab_new_evaluation import INDUSTRY_HELP, PPI_HELP, SHOWN_RUN_KEY
 
 PICKER_KEY_PREFIX = "sc_supplier_"      # the picker's widget key; the run id is added, so a new run starts on its own default
 NOT_STATED_TEXT = "Not stated"
 BEST_LABEL = "Best in this batch"
-EVALUATION_FAILED_TEXT = "The evaluation of this supplier failed, so every score is 0. The warnings below say why."
-NO_INDUSTRY_TEXT = "The industry comparison is not available for this run."
-NO_CHECKS_TEXT = "No mandatory checks were recorded for this run."
+PRICE_LABEL = "Total price"
+EVALUATION_FAILED_TEXT = ("The evaluation of this supplier failed, so every score is 0. "
+                          "The warnings under \"Show the calculation\" say why.")
+NO_INDUSTRY_TEXT = "The comparison with typical laptop deals is not available for this run."
+NO_CHECKS_TEXT = "No must-haves were recorded for this run."
 NO_WARNINGS_TEXT = "No warnings for this supplier."
 NO_CHART_TEXT = "There are no marks to draw for this supplier."
+NO_CRITERIA_TEXT = "No criterion results were saved for this supplier."
 PASSED, NOT_PASSED = "Passed", "Not passed"
 FLAG_NO_RESULT, FLAG_NOT_STATED = "No result returned", "Not stated"
+
+CALCULATION_LABEL = "Show the calculation (marks, benchmarks, gaps, evidence, must-haves, warnings)"
+GOOD_TITLE, WATCH_TITLE = "What's good", "Watch out"
+NOTHING_TO_WATCH = "Nothing stands out as a weak spot."
+MEETS_EVERY_MUST_HAVE = "Meets every must-have"
+NOT_ELIGIBLE_LEAD = "Not eligible:"
+NO_MUST_HAVES_CHECKED = "No must-haves were checked"
+SCORE_LABEL = "Score vs other bids"
+NOT_STATED_NOTE = "· not stated"
+NOT_STATED_HOVER = "The proposal does not address this area, so it was marked 0."
+NO_RESULT_HOVER = "The model gave no mark for this area, so it was set to 0."
 
 BENCHMARK_HELP = "The highest mark any supplier received for this criterion in this run."
 GAP_HELP = "This supplier's mark minus the benchmark. 0 means this supplier is the best on this criterion."
@@ -46,10 +67,17 @@ WEIGHT_HELP = "How many of the 100 points this criterion is worth."
 EVIDENCE_HELP = "A quote from the proposal that supports the mark, with its page."
 POINTS_HELP = "Points for the grade: Above 100, Meets 75, Below 25, Not stated 0."
 SHARE_HELP = "How many of the 100 industry points this attribute is worth."
+AREAS_NOTE = ("Five dots mean full marks. Strong: 80% or more of the maximum mark. Average: 50% to under 80%. Weak: under 50%. "
+              "Hover over the dots to see the exact mark.")
 CRITERIA_NOTE = ("A mark of 0 with \"Not stated in the proposal\" means the proposal does not address the criterion. "
                  "\"No result returned\" means the model gave no mark for it, so it was set to 0.")
 INDUSTRY_NOTE = ("Above = 100 points, Meets = 75, Below = 25, Not stated = 0. "
                  "Baseline values are planning assumptions for a fictional startup, not market research.")
+
+# One small picture per key fact (️ asks for the colour form of the shield). They are decoration: the label is always printed.
+FACT_ICONS: dict[str, str] = {
+    PRICE_LABEL: "\U0001F4B0", "Warranty": "\U0001F6E1️", "Delivery": "\U0001F69A", "Battery": "\U0001F50B", "RAM / SSD": "\U0001F4BE"}
+DOT_FILLED, DOT_EMPTY = "●", "○"
 
 MUTED = tab_overview.MUTED
 GRADE_COLOURS: dict[str, tuple[str, str]] = {   # text, background; the word is always printed too
@@ -61,8 +89,16 @@ GRADE_COLOURS: dict[str, tuple[str, str]] = {   # text, background; the word is 
 FLAG_COLOURS = theme.STRENGTH_COLOURS["Average"]
 PASSED_COLOURS, NOT_PASSED_COLOURS = theme.STRENGTH_COLOURS["Strong"], theme.STRENGTH_COLOURS["Weak"]
 
+NEUTRAL = "neutral"      # the tone of the status chip when no must-have was checked (GOOD and BAD come from the Overview)
+STATUS_COLOURS: dict[str, tuple[str, str]] = {
+    tab_overview.GOOD: theme.PILL_GOOD, tab_overview.BAD: theme.PILL_BAD, NEUTRAL: GRADE_COLOURS[industry.NOT_STATED]}
+STATUS_EDGES: dict[str, str] = {tab_overview.GOOD: theme.EDGE_GOOD, tab_overview.BAD: theme.EDGE_BAD, NEUTRAL: theme.TEAL}
+STATUS_SYMBOLS: dict[str, str] = {tab_overview.GOOD: tab_overview.SYMBOLS[tab_overview.GOOD],
+                                  tab_overview.BAD: tab_overview.SYMBOLS[tab_overview.BAD], NEUTRAL: "–"}
+
 # One line on purpose: Streamlit's markdown ends an HTML block at a blank line, so no line breaks inside the HTML.
 _CSS = (
+    # the three F11 tables
     ".sc-wrap{overflow-x:auto;margin:0.25rem 0 0.5rem 0}"
     f".sc-table{{width:100%;border-collapse:collapse;font-size:0.92rem;color:{theme.TEXT}}}"
     f".sc-table th{{background:{theme.TAB_SELECTED_BACKGROUND};color:{theme.HEADING};text-align:left;"
@@ -76,19 +112,56 @@ _CSS = (
     ".sc-word[title]{cursor:help}"
     ".sc-flag{display:inline-block;margin-left:0.5rem;padding:0.05rem 0.5rem;border-radius:999px;font-size:0.75rem;font-weight:600;"
     f"color:{FLAG_COLOURS[0]};background:{FLAG_COLOURS[1]};white-space:nowrap}}"
-    ".sc-pill{display:inline-block;margin-left:0.6rem;padding:0.05rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:600;"
-    f"color:#FFFFFF;background:{theme.PRIMARY};vertical-align:middle}}"
+    f".sc-warn{{border-left:4px solid {FLAG_COLOURS[0]};background:{FLAG_COLOURS[1]};border-radius:6px;padding:0.5rem 1rem;color:{theme.TEXT}}}"
+    ".sc-warn ul{margin:0.2rem 0;padding-left:1.1rem}"
+    # the header card
+    f".sc-head{{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:0.75rem 1.5rem;"
+    f"background:{theme.CARD_BACKGROUND};border:1px solid {theme.BORDER};border-left-width:8px;border-radius:0.75rem;"
+    "padding:0.9rem 1.2rem;margin:0.25rem 0 0.25rem 0;box-shadow:0 1px 3px rgba(11,79,74,0.08)}"
+    ".sc-head-main{flex:1 1 18rem;min-width:14rem}"
     f".sc-kicker{{color:{theme.TEAL_TEXT};font-size:0.8rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase}}"
     f".sc-name{{color:{theme.HEADING};font-size:1.7rem;font-weight:700;line-height:1.4}}"
+    ".sc-status{margin-top:0.3rem}"
+    ".sc-chip{display:inline-block;margin:0 0.5rem 0.2rem 0;padding:0.15rem 0.7rem;border-radius:999px;font-weight:600;font-size:0.9rem}"
+    ".sc-chip[title]{cursor:help}"
+    ".sc-pill{display:inline-block;margin:0 0.5rem 0.2rem 0;padding:0.15rem 0.7rem;border-radius:999px;font-size:0.9rem;font-weight:600;"
+    f"color:#FFFFFF;background:{theme.PRIMARY}}}"
+    ".sc-score-box{flex:0 0 auto;text-align:right}"
+    ".sc-score-box[title]{cursor:help}"
+    f".sc-score-label{{color:{theme.TEAL_TEXT};font-size:0.8rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase}}"
+    f".sc-score{{color:{theme.HEADING};line-height:1.1}}"
+    ".sc-score-num{font-size:2.6rem;font-weight:700;font-variant-numeric:tabular-nums}"
+    f".sc-score-max{{color:{MUTED};font-size:1.2rem}}"
+    # the five key-fact tiles
     ".sc-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:0.6rem;margin:0.25rem 0 0.5rem 0}"
     f".sc-fact{{background:{theme.CARD_BACKGROUND};border:1px solid {theme.BORDER};border-top:3px solid {theme.TEAL};"
     "border-radius:8px;padding:0.55rem 0.8rem}"
+    f".sc-fact.sc-bad{{background:{theme.PILL_BAD[1]};border-color:{theme.TILE_BAD_BORDER};border-top-color:{theme.EDGE_BAD}}}"
     f".sc-fact-label{{color:{theme.TEAL_TEXT};font-size:0.75rem;font-weight:600;letter-spacing:0.05em;text-transform:uppercase}}"
+    ".sc-fact-icon{margin-right:0.35rem;font-size:0.95rem}"
     f".sc-fact-value{{color:{theme.HEADING};font-size:1.2rem;font-weight:700;line-height:1.35}}"
-    f".sc-fact-value.sc-unstated{{color:{MUTED};font-size:1.05rem;font-weight:400;font-style:italic}}"
+    f".sc-fact-value.sc-unstated{{color:{theme.PILL_BAD[0]};font-size:1.1rem}}"
     f".sc-fact-detail{{color:{MUTED};font-size:0.82rem}}"
-    f".sc-warn{{border-left:4px solid {FLAG_COLOURS[0]};background:{FLAG_COLOURS[1]};border-radius:6px;padding:0.5rem 1rem;color:{theme.TEXT}}}"
-    ".sc-warn ul{margin:0.2rem 0;padding-left:1.1rem}"
+    f".sc-over{{color:{theme.PILL_BAD[0]};font-size:0.9rem;font-weight:700}}"
+    # What's good / Watch out
+    ".sc-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:0.75rem;margin:0.25rem 0 0.5rem 0}"
+    f".sc-box{{background:{theme.CARD_BACKGROUND};border:1px solid {theme.BORDER};border-top-width:4px;border-radius:0.75rem;"
+    "padding:0.8rem 1rem}"
+    ".sc-box-title{font-size:1.05rem;font-weight:700;margin-bottom:0.35rem}"
+    ".sc-box ul{list-style:none;margin:0;padding:0}"
+    f".sc-box li{{color:{theme.TEXT};font-size:0.95rem;margin:0.3rem 0}}"
+    ".sc-ico{display:inline-block;width:1.3rem;font-weight:700}"
+    f".sc-basis{{color:{MUTED};font-size:0.8rem}}"
+    # how it did on each area
+    f".sc-areas{{width:100%;border-collapse:collapse;font-size:0.95rem;color:{theme.TEXT}}}"
+    f".sc-areas td{{padding:0.45rem 0.65rem;border-bottom:1px solid {theme.BORDER};vertical-align:middle}}"
+    f".sc-area-name{{color:{theme.HEADING};font-weight:600;white-space:nowrap;width:14rem}}"
+    ".sc-area-name [title],.sc-dots[title]{cursor:help}"
+    ".sc-dots{white-space:nowrap;letter-spacing:0.12em;font-size:1.15rem;width:9rem}"
+    ".sc-area-word{width:7.5rem}"
+    f".sc-na{{color:{MUTED}}}"
+    f".sc-area-note{{color:{MUTED};font-size:0.85rem}}"
+    ".sc-area-note [title]{cursor:help}"
 )
 
 
@@ -144,7 +217,7 @@ class ChartData:
 
 @dataclass(frozen=True)
 class Scorecard:
-    row: tab_overview.Row               # rank, name, the three scores, submission date, experience, eligibility
+    row: tab_overview.Row               # rank, name, the three scores, submission date, experience, eligibility, price, pros and cons
     count: int                          # suppliers in the run
     recommended: bool
     facts: tuple[KeyFact, ...]
@@ -160,6 +233,16 @@ class Scorecards:
     run_line: str
     cards: tuple[Scorecard, ...]        # best rank first
     default_index: int                  # the recommended supplier, or the top-ranked one when nobody is eligible
+
+
+@dataclass(frozen=True)
+class Status:
+    """The coloured chip in the header: does the supplier meet every must-have?"""
+
+    tone: str                           # tab_overview.GOOD, tab_overview.BAD or NEUTRAL (no must-have was checked)
+    lead: str                           # "Meets every must-have", "Not eligible:" or "No must-haves were checked"
+    rest: str | None                    # for Not eligible: the first thing that is wrong, in a few words
+    hover: str | None                   # for Not eligible: every failed must-have, one per line
 
 
 def _number(value: Any) -> float | None:
@@ -189,7 +272,7 @@ def _price(value: float | None) -> str | None:
 def key_facts(facts: dict[str, Any]) -> tuple[KeyFact, ...]:
     """The five facts at the top of a scorecard, from what the model read in the proposal."""
     total, unit = _number(facts.get("grand_total_rs")), _number(facts.get("unit_price_rs"))
-    price = KeyFact("Total price", _price(total), None if unit is None else f"{_price(unit)} per laptop")
+    price = KeyFact(PRICE_LABEL, _price(total), None if unit is None else f"{_price(unit)} per laptop")
 
     years, cover = _number(facts.get("warranty_years")), facts.get("warranty_type")
     cover_text = {"on-site": "On-site cover", "carry-in": "Carry-in only"}.get(cover) if isinstance(cover, str) else None
@@ -274,6 +357,29 @@ def picker_label(card: Scorecard) -> str:
     return f"{card.row.rank}. {card.row.name}"
 
 
+def status_of(card: Scorecard) -> Status:
+    """Meets every must-have (green), Not eligible with the first problem (red), or nothing was checked (grey).
+
+    A supplier with no must-haves on record is not said to meet them: nothing was checked, so the chip says that instead.
+    """
+    row = card.row
+    if not row.eligible:
+        first = row.problems[0] if row.problems else None
+        more = len(row.problems) - 1
+        rest = None if first is None else first + (f" (+{more} more)" if more > 0 else "")
+        return Status(tab_overview.BAD, NOT_ELIGIBLE_LEAD if rest else tab_overview.NOT_ELIGIBLE, rest, "\n".join(row.why_not) or None)
+    if not row.gates:
+        return Status(NEUTRAL, NO_MUST_HAVES_CHECKED, None, None)
+    return Status(tab_overview.GOOD, MEETS_EVERY_MUST_HAVE, None, None)
+
+
+def strength_of(line: Line) -> str | None:
+    """Strong / Average / Weak for a criterion (spec 9.6), or None when its mark or maximum is missing or unusable."""
+    if line.score is None or line.max_score is None or line.max_score <= 0:
+        return None
+    return insights.strength_label(line.score, line.max_score)
+
+
 # ---------------------------------------------------------------- the HTML pieces
 
 def _e(text: Any) -> str:
@@ -301,27 +407,100 @@ def _table(head: str, body: str) -> str:
 
 
 def header_html(card: Scorecard) -> str:
-    """The supplier's name with its rank, a Recommended pill when it is the pick, and the Eligible / Not eligible badge."""
+    """The header card: the supplier's name and rank, the status chip (and Recommended), and the score vs other bids as a big number."""
     row = card.row
+    status = status_of(card)
+    colour, background = STATUS_COLOURS[status.tone]
+    hover = f' title="{_title(status.hover)}"' if status.hover else ""
+    words = f"<strong>{_e(status.lead)}</strong>" if status.tone == tab_overview.BAD else _e(status.lead)
+    if status.rest:
+        words += f" {_e(status.rest)}"
+    chip = f'<span class="sc-chip" style="color:{colour};background:{background}"{hover}>{STATUS_SYMBOLS[status.tone]} {words}</span>'
     pill = '<span class="sc-pill">Recommended</span>' if card.recommended else ""
-    colours = tab_overview.ELIGIBLE_COLOURS if row.eligible else tab_overview.NOT_ELIGIBLE_COLOURS
-    word = tab_overview.ELIGIBLE if row.eligible else tab_overview.NOT_ELIGIBLE
-    hover = None if row.eligible else "\n".join(row.why_not)
-    badge = f' <span style="margin-left:0.6rem;vertical-align:middle">{_word(word, colours, hover)}</span>'
+    score = (f'<div class="sc-score-box" title="{_title(PPI_HELP)}"><div class="sc-score-label">{SCORE_LABEL}</div>'
+             f'<div class="sc-score"><span class="sc-score-num">{row.ppi:.2f}</span><span class="sc-score-max"> / 100</span></div></div>')
     return (f"<style>{_CSS}</style>"
+            f'<div class="sc-head" style="border-left-color:{STATUS_EDGES[status.tone]}"><div class="sc-head-main">'
             f'<div class="sc-kicker">Supplier scorecard · Ranked {row.rank} of {card.count}</div>'
-            f'<div class="sc-name">{_e(row.name)}{pill}{badge}</div>')
+            f'<div class="sc-name">{_e(row.name)}</div><div class="sc-status">{chip}{pill}</div></div>{score}</div>')
 
 
-def facts_html(facts: tuple[KeyFact, ...]) -> str:
-    """The key-facts strip: one tile per fact, 'Not stated' in grey italics when the proposal does not say."""
-    tiles = []
-    for fact in facts:
-        value = (f'<div class="sc-fact-value">{_e(fact.value)}</div>' if fact.value is not None
-                 else f'<div class="sc-fact-value sc-unstated">{NOT_STATED_TEXT}</div>')
-        detail = f'<div class="sc-fact-detail">{_e(fact.detail)}</div>' if fact.detail else ""
-        tiles.append(f'<div class="sc-fact"><div class="sc-fact-label">{_e(fact.label)}</div>{value}{detail}</div>')
-    return f'<style>{_CSS}</style><div class="sc-facts">{"".join(tiles)}</div>'
+NO_PRICE_FACTS = insights.PriceFacts(None, None, None, None)
+
+
+def tile_html(fact: KeyFact, price: insights.PriceFacts = NO_PRICE_FACTS) -> str:
+    """One key-fact tile. It is red-tinted when the proposal does not say, and the price tile also when it is over the budget."""
+    over = fact.label == PRICE_LABEL and fact.value is not None and price.within_budget is False
+    stated = fact.value is not None
+    value = (f'<div class="sc-fact-value">{_e(fact.value)}</div>' if stated
+             else f'<div class="sc-fact-value sc-unstated">{NOT_STATED_TEXT}</div>')
+    notes = f'<div class="sc-over">{_e(insights.format_lakh(price.over_by_rs or 0))} over budget</div>' if over else ""
+    notes += f'<div class="sc-fact-detail">{_e(fact.detail)}</div>' if fact.detail else ""
+    icon = FACT_ICONS.get(fact.label)
+    icon_html = f'<span class="sc-fact-icon" aria-hidden="true">{icon}</span>' if icon else ""
+    css = "sc-fact" if stated and not over else "sc-fact sc-bad"
+    return f'<div class="{css}"><div class="sc-fact-label">{icon_html}{_e(fact.label)}</div>{value}{notes}</div>'
+
+
+def facts_html(facts: tuple[KeyFact, ...], price: insights.PriceFacts = NO_PRICE_FACTS) -> str:
+    """The five key-fact tiles side by side. `price` says whether the total is over the run's budget."""
+    return f'<style>{_CSS}</style><div class="sc-facts">{"".join(tile_html(fact, price) for fact in facts)}</div>'
+
+
+def _reason_items(reasons: tuple[insights.Reason, ...], empty: str, tone_of: Callable[[insights.Reason], str]) -> str:
+    if not reasons:
+        return f'<li class="sc-basis">{_e(empty)}</li>'
+    items = []
+    for reason in reasons:
+        tone = tone_of(reason)
+        items.append(f'<li><span class="sc-ico" style="color:{tab_overview.TONE_COLOURS[tone][0]}">{tab_overview.SYMBOLS[tone]}</span>'
+                     f'{_e(reason.text)}<span class="sc-basis"> · {_e(reason.basis)}</span></li>')
+    return "".join(items)
+
+
+def _box(title: str, tone: str, items: str) -> str:
+    return (f'<div class="sc-box" style="border-top-color:{tab_overview.TONE_EDGES[tone]}">'
+            f'<div class="sc-box-title" style="color:{tab_overview.TONE_COLOURS[tone][0]}">{tab_overview.SYMBOLS[tone]} {_e(title)}</div>'
+            f'<ul>{items}</ul></div>')
+
+
+def reasons_html(pros: tuple[insights.Reason, ...], cons: tuple[insights.Reason, ...]) -> str:
+    """Two cards side by side: what is good (left) and what to watch out for (right), as chosen in `tools/insights.py`.
+
+    A must-have that was not met is a red cross; every other thing to watch out for is an amber warning sign.
+    """
+    good = _reason_items(pros, tab_overview.NOTHING_STANDS_OUT, lambda _r: tab_overview.GOOD)
+    watch = _reason_items(cons, NOTHING_TO_WATCH, lambda r: tab_overview.BAD if r.kind == insights.KIND_GATE else tab_overview.WARN)
+    return (f'<style>{_CSS}</style><div class="sc-two">{_box(GOOD_TITLE, tab_overview.GOOD, good)}'
+            f'{_box(WATCH_TITLE, tab_overview.WARN, watch)}</div>')
+
+
+def _dots(filled: int, colour: str) -> str:
+    empty = insights.METER_DOTS - filled
+    return (f'<span style="color:{colour}">{DOT_FILLED * filled}</span><span style="color:{theme.METER_EMPTY}">{DOT_EMPTY * empty}</span>')
+
+
+def areas_html(lines: tuple[Line, ...]) -> str:
+    """One row per criterion: its everyday name (the real name on hover), a 5-dot meter, Strong / Average / Weak, and '· not stated'."""
+    rows = []
+    for line in lines:
+        label = insights.plain_label(line.name)
+        hover = f' title="{_title(line.name)}"' if label != line.name else ""
+        filled = insights.meter_dots(line.score, line.max_score)
+        strength = strength_of(line)
+        if filled is None or strength is None:
+            meter, word = '<td class="sc-na">n/a</td>', "<td></td>"
+        else:
+            colours = theme.STRENGTH_COLOURS[strength]
+            marks = f"{line.score:g} out of {line.max_score:g}"
+            meter = (f'<td class="sc-dots" title="{_title(marks)}"><span role="img" aria-label="{filled} of {insights.METER_DOTS} dots">'
+                     f'{_dots(filled, colours[0])}</span></td>')
+            word = f'<td class="sc-area-word">{_word(strength, colours)}</td>'
+        note = ""
+        if line.flag:
+            note = f'<span title="{_title(NO_RESULT_HOVER if line.flag == FLAG_NO_RESULT else NOT_STATED_HOVER)}">{NOT_STATED_NOTE}</span>'
+        rows.append(f'<tr><td class="sc-area-name"><span{hover}>{_e(label)}</span></td>{meter}{word}<td class="sc-area-note">{note}</td></tr>')
+    return f'<style>{_CSS}</style><div class="sc-wrap"><table class="sc-areas"><tbody>{"".join(rows)}</tbody></table></div>'
 
 
 def _marks(score: float | None, maximum: float | None) -> str:
@@ -379,7 +558,7 @@ def industry_html(attributes: tuple[Attribute, ...]) -> str:
 
 
 def gates_html(gates: tuple[Gate, ...]) -> str:
-    """One row per mandatory check: Passed or Not passed (always the word), and the reason."""
+    """One row per must-have: Passed or Not passed (always the word), and the reason."""
     head = _th("Check") + _th("Result") + _th("Why")
     body = "".join(
         f'<tr><td><strong>{_e(g.name)}</strong></td><td>{_word(PASSED if g.passed else NOT_PASSED, PASSED_COLOURS if g.passed else NOT_PASSED_COLOURS)}</td>'
@@ -424,42 +603,29 @@ def _note(text: str) -> None:
     st.markdown(f'<p style="color:{MUTED};font-size:0.9rem;margin:0.25rem 0">{_e(text)}</p>', unsafe_allow_html=True)
 
 
-def _show_card(card: Scorecard) -> None:
+def _calculation(card: Scorecard) -> None:
+    """Everything F11 showed as numbers: the three scores, the criterion table, the industry table, the must-haves and the warnings."""
     row = card.row
-    st.markdown(header_html(card), unsafe_allow_html=True)
-    _note(f"Submitted {row.submitted} · Experience rating: {row.experience}")
-    if card.evaluation_failed:
-        st.error(EVALUATION_FAILED_TEXT)
     overall, ppi, industry_score = st.columns(3)
     overall.metric("Overall /100", f"{row.overall:.2f}", help=tab_overview.OVERALL_HELP)
-    ppi.metric("Peer score (PPI)", f"{row.ppi:.2f}", help=PPI_HELP)
+    ppi.metric(f"{tab_overview.PPI_NAME} (PPI)", f"{row.ppi:.2f}", help=PPI_HELP)
     industry_score.metric("Industry score", f"{row.industry:.2f}", help=INDUSTRY_HELP)
-
-    st.markdown("#### Key facts")
-    st.markdown(facts_html(card.facts), unsafe_allow_html=True)
-
-    st.markdown("#### Score vs best")
-    figure = card_figure(card)
-    if figure is None:
-        st.info(NO_CHART_TEXT)
-    else:
-        st.plotly_chart(figure, width="stretch")
 
     st.markdown("#### Criterion by criterion")
     if card.lines:
         st.markdown(criteria_html(card.lines), unsafe_allow_html=True)
         _note(CRITERIA_NOTE)
     else:
-        st.info("No criterion results were saved for this supplier.")
+        _note(NO_CRITERIA_TEXT)
 
-    st.markdown("#### Industry comparison")
+    st.markdown("#### Compared with typical laptop deals")
     if card.attributes:
         st.markdown(industry_html(card.attributes), unsafe_allow_html=True)
         _note(f"Industry score {row.industry:.2f} out of 100. {INDUSTRY_NOTE}")
     else:
         st.info(NO_INDUSTRY_TEXT)
 
-    st.markdown("#### Mandatory checks")
+    st.markdown("#### Must-haves")
     if card.gates:
         st.markdown(gates_html(card.gates), unsafe_allow_html=True)
     else:
@@ -470,6 +636,39 @@ def _show_card(card: Scorecard) -> None:
         st.markdown(warnings_html(card.warnings), unsafe_allow_html=True)
     else:
         _note(NO_WARNINGS_TEXT)
+
+
+def _show_card(card: Scorecard) -> None:
+    row = card.row
+    st.markdown(header_html(card), unsafe_allow_html=True)
+    _note(f"Submitted {row.submitted} · Experience rating: {row.experience}")
+    if card.evaluation_failed:
+        st.error(EVALUATION_FAILED_TEXT)
+
+    st.markdown("#### Key facts")
+    st.markdown(facts_html(card.facts, row.price), unsafe_allow_html=True)
+
+    if card.evaluation_failed:
+        _note(tab_overview.NOTHING_TO_SHOW)      # a failed evaluation has no marks worth praising or criticising
+    else:
+        st.markdown(reasons_html(row.pros, row.cons), unsafe_allow_html=True)
+
+    st.markdown("#### How it did on each area")
+    if card.lines:
+        st.markdown(areas_html(card.lines), unsafe_allow_html=True)
+        _note(AREAS_NOTE)
+    else:
+        st.info(NO_CRITERIA_TEXT)
+
+    st.markdown("#### Score vs best")
+    figure = card_figure(card)
+    if figure is None:
+        st.info(NO_CHART_TEXT)
+    else:
+        st.plotly_chart(figure, width="stretch")
+
+    with st.expander(CALCULATION_LABEL, expanded=False):
+        _calculation(card)
 
 
 def _show(run_id: str, scorecards: Scorecards) -> None:

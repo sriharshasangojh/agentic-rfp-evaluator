@@ -49,6 +49,8 @@ PILL_BAD = ("#C62828", "#FFEBEE")
 EDGE_GOOD = "#2E7D32"            # the coloured edge of the verdict banner
 EDGE_WARN = "#E09100"
 EDGE_BAD = "#C62828"
+TILE_BAD_BORDER = "#F1B8B8"      # the outline of a key-fact tile that is red-tinted (a fact not stated, or a price over budget)
+METER_EMPTY = "#7F9A96"          # an empty dot of the 5-dot meter on a scorecard (the shape differs from a filled dot too)
 
 
 def inject_theme_css() -> None:

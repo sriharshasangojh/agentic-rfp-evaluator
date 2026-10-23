@@ -796,3 +796,61 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
     the limit in item 160 for hand-edited data still stands. 143 new tests (83 in `test_insights.py`, 60 in
     `test_tab_overview.py`); 71 deliberate breaks of the new code, all caught (7 slipped through the first time and each
     got a test). `pytest` should now report 1186 passed (1043 + 143).
+
+### R1b: Scorecards
+
+176. **Header card.** One white card with a coloured left edge: the small line "Supplier scorecard - Ranked N of M", the
+    supplier's name, and under it a status chip. Green "tick Meets every must-have", red "cross Not eligible: <first problem
+    in plain words> (+N more)" with every failed must-have on hover (one per line), or grey "No must-haves were checked".
+    The grey one is my decision: a supplier with no must-have on record (an odd or hand-edited run) is not told it "meets every
+    must-have" when nothing was checked. The Recommended pill sits next to the chip (the pack puts it with the status). A
+    failed evaluation reads "Not eligible: the evaluation failed". The pack says "first failed must-have"; I added "(+N more)"
+    so that nobody reads one problem as the only one. On the right, the Score vs other bids is one big number with two
+    decimals ("87.78 / 100"), hover = the PPI text unchanged. The old "Eligible" badge word is gone, so `tab_overview.ELIGIBLE`
+    (item 174) was removed; "Not eligible" stays (spec 9.3). The line "Submitted ... Experience rating" stays under the card.
+177. **Key-fact tiles.** The same five tiles in the same order, each with a small picture (money bag, shield, truck, battery,
+    disk). The pictures are decoration only (hidden from screen readers); the label is always printed. A tile turns red-tinted
+    when the proposal does not say ("Not stated" is printed too, so colour is never the only signal). The price tile also
+    turns red-tinted when the total is over the run's budget (the run's own, DECISIONS 69, worked out by
+    `insights.price_facts`) and says "Rs 13.99 lakh over budget" above the per-laptop line. No over-budget line when the price
+    is inside the budget, exactly on it, not stated, or when the run was saved without a budget; only the price tile can say
+    it. When only one half of RAM / SSD is stated the tile is not tinted and its detail line says which half is missing
+    (my choice: a value is there, so the tile is not an empty one).
+178. **What's good / Watch out.** Two cards side by side (they stack on a narrow screen), filled by `insights.select_pros_cons`
+    exactly as the Overview cards (item 171), at most 3 each (spec 10.1), each point followed by the small spec label
+    ("vs this batch" ...). Unlike the Overview cards, a failed must-have IS listed here, as a red cross, because the header
+    names only the first; every other weak point is an amber warning sign. An empty card says so calmly ("Nothing stands out
+    against the other bids." / "Nothing stands out as a weak spot."); a failed evaluation shows one line instead of both
+    cards. The wording stays Python's until F16.
+179. **How it did on each area.** One row per criterion in marking-scheme order: the plain label (the real name on hover, only
+    when it differs), a 5-dot meter and the Strong / Average / Weak word (spec 9.6, the same function as the Overview
+    table). Dots = score / maximum x 5, rounded to the nearest dot with exactly half rounding UP, worked out in
+    `insights.meter_dots` with exact fractions. I did not use Python's `round()`: it rounds 2.5 to 2, so 5 out of 10 (which
+    is Average) would show 2 dots. With half-up it shows 3. Result, tested at every tenth of a point: Weak has 0 to 2 dots,
+    Average 3 or 4, Strong 4 or 5, so a meter never contradicts the word beside it. 0, 4, 7 and 10 out of 10 give 0, 2, 4
+    and 5 dots; 5 out of 5 gives 5. A mark above the maximum fills every dot, a negative one none. Filled dots take the
+    strength colour, empty ones a grey (the shape differs as well). Hovering over the dots shows the exact mark ("7 out of
+    10"). A criterion with no usable mark or maximum shows "n/a" with no dots and no word. "- not stated" follows the row
+    when the evidence says "Not stated in the proposal" or the validator filled the criterion (the pack's rule); the hover
+    tells the two apart ("the proposal does not address this area" / "the model gave no mark for this area"). A note under
+    the rows explains the dots.
+180. **Show the calculation (closed).** Holds, in this order: the three scores as metrics (Overall /100, Score vs other bids
+    (PPI), Industry score: the numbers that used to be at the top, so nothing is lost), "Criterion by criterion" with its note,
+    "Compared with typical laptop deals" with its note, "Must-haves", and "Warnings". The three tables are the F11 tables
+    unchanged. The Score vs best chart stays outside, between the area rows and this section, unchanged (it keeps the real
+    criterion names, which the pack does not rename). The failed-evaluation message stays red at the top, outside; its text now
+    says the warnings are "under Show the calculation" (it used to say "below"). Screen words: "Mandatory checks" is now
+    "Must-haves", "Peer score (PPI)" is now "Score vs other bids (PPI)" (tooltip unchanged), "Industry comparison" is now
+    "Compared with typical laptop deals"; the two empty-state sentences were reworded to match. The Setup tab's heading
+    "Mandatory checks (gates)" is not in the pack and was left alone.
+181. **Left as it was, on purpose.** The supplier picker and its keys. No schema change, no new package, no LLM call, no new
+    chart (still 2 of 6) and nothing from spec Section 18: no ranking bars, stacked bars or sliders. Known limit: warnings that
+    are not a failed evaluation are now only inside the closed section (the pack puts them there); the "not stated" note on a
+    row and the red tiles are what a reader sees without opening it. Offered if you want it: a small "N warnings" hint next to
+    the section's title.
+182. **Checks.** 107 new tests (45 in `test_insights.py` for the meter, 62 net in `test_tab_scorecards.py`); the 9 AppTest
+    checks of this tab (2 of them adjusted for the new words) cannot be run in the build container, so your own `pytest` run
+    is their first real run. 63 deliberate breaks of the new code; 6 got through the first time (a wrong "+N more" count, an
+    unescaped problem text in the chip, a price tile that ignored the budget in two places, a tile claiming "over budget"
+    with no price, the missing note under the dots) and each got a test; all were caught in the final run. `pytest` should now
+    report 1293 passed (1043 + 143 + 107).

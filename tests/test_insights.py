@@ -416,6 +416,59 @@ def test_a_gate_reason_with_line_breaks_stays_on_one_line():
     assert result.cons[0].text == "Not eligible: Warranty \u2014 1 year (at least 3)"
 
 
+# ---------------------------------------------------------------- the 5-dot meter (change pack R1b)
+
+@pytest.mark.parametrize("score, maximum, expected", [
+    (0, 10, 0), (4, 10, 2), (7, 10, 4), (10, 10, 5),          # the four cases of the change pack
+    (5, 5, 5), (3, 5, 3), (0, 5, 0),                          # a maximum of 5
+    (8, 10, 4), (9, 10, 5), (2, 10, 1), (1, 10, 1), (0.5, 10, 0), (4.9, 10, 2), (7.5, 10, 4), (6.9, 10, 3),
+    (1, 3, 2), (2, 3, 3), (7, 20, 2), (50, 100, 3)])
+def test_the_dots_are_the_share_of_the_maximum_times_five_to_the_nearest_dot(score, maximum, expected):
+    assert insights.meter_dots(score, maximum) == expected
+
+
+@pytest.mark.parametrize("score, maximum", [(5, 10), (1, 10), (3, 10), (7, 10), (9, 10), (2.5, 5), (0.5, 1), (1.5, 3)])
+def test_exactly_half_a_dot_rounds_up_not_to_the_even_dot(score, maximum):
+    """Python's round() would give 2 for 2.5 dots; the meter gives 3, so 50% (Average) never shows fewer dots than 3."""
+    assert insights.meter_dots(score, maximum) == int(score / maximum * 5 + 0.5)
+    assert insights.meter_dots(5, 10) == 3 and insights.meter_dots(1, 10) == 1
+
+
+def test_the_dots_agree_with_the_strength_word_at_every_tenth_of_a_point():
+    """Weak has 0 to 2 dots, Average 3 or 4, Strong 4 or 5, so a meter never contradicts the word beside it."""
+    ranges = {insights.WEAK: (0, 2), insights.AVERAGE: (3, 4), insights.STRONG: (4, 5)}
+    for tenths in range(0, 101):
+        score = tenths / 10
+        low, high = ranges[insights.strength_label(score, 10)]
+        dots = insights.meter_dots(score, 10)
+        assert dots is not None and low <= dots <= high, (score, dots)
+    assert insights.meter_dots(9.9, 10) == 5 and insights.meter_dots(8.9, 10) == 4
+
+
+def test_dots_never_decrease_when_the_mark_goes_up():
+    previous = -1
+    for hundredths in range(0, 1001):
+        dots = insights.meter_dots(hundredths / 100, 10)
+        assert dots is not None and 0 <= dots <= 5 and dots >= previous
+        previous = dots
+
+
+def test_a_mark_outside_the_range_is_clamped_to_empty_or_full():
+    assert insights.meter_dots(12, 10) == 5 and insights.meter_dots(-3, 10) == 0
+
+
+def test_the_number_of_dots_can_be_changed():
+    assert insights.METER_DOTS == 5
+    assert insights.meter_dots(5, 10, dots=10) == 5 and insights.meter_dots(10, 10, dots=3) == 3 and insights.meter_dots(7, 10, dots=3) == 2
+
+
+@pytest.mark.parametrize("score, maximum", [
+    (None, 10), (5, None), (5, 0), (5, -10), (0, 0), ("5", 10), (5, "10"), (True, 10), (5, True), (float("nan"), 10), (5, float("nan")),
+    (float("inf"), 10), (5, float("inf")), ([5], 10)])
+def test_no_meter_when_the_mark_or_the_maximum_is_missing_or_not_a_usable_number(score, maximum):
+    assert insights.meter_dots(score, maximum) is None
+
+
 def test_insights_module_stays_pure():
     """Spec 2.1 and 21: no LLM, I/O, randomness or clock in insights.py. Only these imports are allowed."""
     allowed = {"__future__", "collections", "dataclasses", "fractions", "math", "typing"}

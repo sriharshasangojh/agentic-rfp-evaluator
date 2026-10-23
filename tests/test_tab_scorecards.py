@@ -1,4 +1,4 @@
-"""Scorecards tab tests (feature F11).
+"""Scorecards tab tests (feature F11, reworked for readable results by change pack R1b).
 
 Most tests call the tab's own functions on saved runs that are written straight into a temporary database, so every
 combination (a missing criterion, a failed check, odd data) can be set up exactly. One test pushes a real batch through the
@@ -13,6 +13,7 @@ import itertools
 import json
 import math
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +27,7 @@ pytest.importorskip("plotly")
 from agents import orchestrator  # noqa: E402
 from db import repository, seed  # noqa: E402
 from llm import client  # noqa: E402
-from tools import industry, pdf_tool  # noqa: E402
+from tools import industry, insights, pdf_tool  # noqa: E402
 from ui import tab_new_evaluation, tab_overview, tab_scorecards as S, theme  # noqa: E402
 
 try:
@@ -74,6 +75,16 @@ def card_result(scores=(9, 7, 5, 9, 8), *, facts=FULL_FACTS, failed=(), warnings
     return result
 
 
+SEEDED_GATES = [("warranty", "Warranty", "3 years (at least 3 required)"), ("certification", "Certification", "BIS registration named"),
+                ("price_table", "Price table", "Price table present"), ("delivery", "Delivery", "6 weeks (at most 8 allowed)")]
+
+
+def seeded_result(*, evaluation_failed: bool = False, **failing: str) -> dict[str, Any]:
+    """A saved result with the four seeded must-haves (so the plain wording applies). `failing` maps a gate id to why it failed."""
+    gates = [{"gate_id": gid, "name": name, "passed": gid not in failing, "reason": failing.get(gid, ok)} for gid, name, ok in SEEDED_GATES]
+    return card_result(gate_details=gates, evaluation_failed=evaluation_failed)
+
+
 def supplier(name: str, rank: int, *, eligible: bool = True, result: dict[str, Any] | None = None, industry_score: float = 75.0,
              ppi: float = 80.0, overall: float = 70.0, rating: int | None = 3, when: str = "2026-10-05") -> dict[str, Any]:
     failed = () if eligible else (("Warranty", "1 year (at least 3 required)"),)
@@ -84,15 +95,19 @@ def supplier(name: str, rank: int, *, eligible: bool = True, result: dict[str, A
 _run_numbers = itertools.count(1)
 
 
-def store_run(*suppliers: dict[str, Any], run_id: str | None = None) -> tuple[repository.RunRecord, list[repository.StoredSupplier]]:
-    """Save a run by hand. Each call gets its own run id unless one is given (every test starts with an empty database)."""
+def store_run(*suppliers: dict[str, Any], run_id: str | None = None, budget_rs: float | None = 6000000,
+              quantity: int | None = 100) -> tuple[repository.RunRecord, list[repository.StoredSupplier]]:
+    """Save a run by hand. Each call gets its own run id unless one is given (every test starts with an empty database).
+
+    The run's budget is Rs 60 lakh for 100 laptops unless the test says otherwise (None saves a run without one, like an old run).
+    """
     run_id = run_id or f"RUN-TEST-{next(_run_numbers):03d}"
     with repository.connection() as conn:
         repository.create_run(
             conn, run_id=run_id, created_at="2026-10-23T09:30:00+00:00", provider="OpenAI", model="test-model", temperature=0,   # type: ignore[arg-type]
             template_id=repository.DEFAULT_TEMPLATE_ID,
             criteria_snapshot_json=json.dumps([{"criterion_id": i, "name": n, "weight": w, "max_score": 10.0} for i, n, w in CRITERIA]),
-            reviewer_name="Sri", budget_rs=6000000, quantity=100)   # type: ignore[arg-type]
+            reviewer_name="Sri", budget_rs=budget_rs, quantity=quantity)   # type: ignore[arg-type]
         for s in suppliers:
             repository.save_supplier_result(
                 conn, run_id=run_id, supplier_name=s["name"], submission_date=s["when"], experience_rating=s["rating"],
@@ -366,7 +381,9 @@ def test_the_axis_follows_the_largest_maximum_when_criteria_have_different_maxim
 
 HTML_BUILDERS = {
     "header": lambda card: S.header_html(card),
-    "facts": lambda card: S.facts_html(card.facts),
+    "facts": lambda card: S.facts_html(card.facts, card.row.price),
+    "reasons": lambda card: S.reasons_html(card.row.pros, card.row.cons),
+    "areas": lambda card: S.areas_html(card.lines),
     "criteria": lambda card: S.criteria_html(card.lines),
     "industry": lambda card: S.industry_html(card.attributes),
     "gates": lambda card: S.gates_html(card.gates),
@@ -382,32 +399,93 @@ def test_the_html_is_one_line_with_its_own_style(builder):
     assert "\n" not in html_text and html_text.startswith("<style>") and "</style>" in html_text
 
 
-def test_the_header_names_the_supplier_its_rank_and_whether_it_is_eligible():
+# ---------------------------------------------------------------- R1b: the header card
+
+def header_of(*suppliers: dict[str, Any], pick: int = 0, **options) -> str:
+    return S.header_html(scorecards_of(*suppliers, **options).cards[pick])
+
+
+def test_the_header_names_the_supplier_and_its_rank_and_marks_the_pick():
     result = scorecards_of(supplier("Apex Systems", 1), supplier("Orbit", 2))
     text = S.header_html(result.cards[0])
-    assert "Apex Systems" in text and "Ranked 1 of 2" in text and ">Eligible<" in text and "Recommended" in text and "title=" not in text
+    assert "Apex Systems" in text and "Ranked 1 of 2" in text and '<span class="sc-pill">Recommended</span>' in text
     assert "Recommended" not in S.header_html(result.cards[1])
 
 
-def test_a_not_eligible_header_shows_the_failed_checks_on_hover_and_is_never_recommended():
-    card = scorecards_of(supplier("BrightPath Tech", 1, eligible=False)).cards[0]
-    text = S.header_html(card)
-    assert ">Not eligible<" in text and "Recommended" not in text
-    assert 'title="Warranty: 1 year (at least 3 required)"' in text
+def test_an_eligible_supplier_gets_a_green_chip_that_says_it_meets_every_must_have():
+    text = header_of(supplier("Apex", 1))
+    good = theme.PILL_GOOD
+    assert f'<span class="sc-chip" style="color:{good[0]};background:{good[1]}">✓ Meets every must-have</span>' in text
+    assert f"border-left-color:{theme.EDGE_GOOD}" in text and "Not eligible" not in text
 
 
-def test_the_header_badge_is_green_when_eligible_and_red_when_not_like_the_overview():
-    eligible = S.header_html(scorecards_of(supplier("Apex", 1), run_id="RUN-TEST-GREEN").cards[0])
-    not_eligible = S.header_html(scorecards_of(supplier("Apex", 1, eligible=False), run_id="RUN-TEST-RED").cards[0])
-    green, red = tab_overview.ELIGIBLE_COLOURS, tab_overview.NOT_ELIGIBLE_COLOURS
-    assert f'style="color:{green[0]};background:{green[1]}">Eligible</span>' in eligible
-    assert f'style="color:{red[0]};background:{red[1]}"' in not_eligible and ">Not eligible</span>" in not_eligible
+def test_a_not_eligible_supplier_gets_a_red_chip_with_the_first_problem_in_plain_words():
+    text = header_of(supplier("Vertexa", 1, eligible=False, result=seeded_result(price_table="No price table")))
+    bad = theme.PILL_BAD
+    assert (f'<span class="sc-chip" style="color:{bad[0]};background:{bad[1]}" title="Price table: No price table">'
+            "✗ <strong>Not eligible:</strong> no price list</span>") in text
+    assert f"border-left-color:{theme.EDGE_BAD}" in text
+    assert "Recommended" not in text and "Meets every must-have" not in text
 
 
-def test_a_header_with_several_failed_checks_lists_each_on_its_own_line_of_the_hover_text():
-    result = card_result(failed=(("Warranty", "1 year (at least 3 required)"), ("Certification", "Not stated")))
-    text = S.header_html(scorecards_of(supplier("BrightPath Tech", 1, eligible=False, result=result)).cards[0])
-    assert 'title="Warranty: 1 year (at least 3 required)&#10;Certification: Not stated"' in text and "\n" not in text
+def test_several_failed_must_haves_show_the_first_and_count_the_rest_with_every_one_on_hover():
+    result = seeded_result(warranty="1 year (at least 3 required)", certification="BIS registration not named", delivery="Not stated")
+    text = header_of(supplier("Vertexa", 1, eligible=False, result=result))
+    assert "<strong>Not eligible:</strong> warranty under 3 years (+2 more)</span>" in text
+    assert 'title="Warranty: 1 year (at least 3 required)&#10;Certification: BIS registration not named&#10;Delivery: Not stated"' in text
+    assert "\n" not in text
+
+
+def test_two_failed_must_haves_say_plus_one_more_and_a_single_one_says_nothing_more():
+    two = header_of(supplier("Vertexa", 1, eligible=False, result=seeded_result(warranty="1 year (at least 3 required)", delivery="Not stated")))
+    assert "<strong>Not eligible:</strong> warranty under 3 years (+1 more)</span>" in two
+    one = header_of(supplier("Vertexa", 1, eligible=False, result=seeded_result(delivery="Not stated")))
+    assert "<strong>Not eligible:</strong> delivery time not stated</span>" in one and "more)" not in one
+
+
+def test_a_must_have_name_or_reason_from_the_saved_run_cannot_inject_html_into_the_header():
+    evil = '"><script>alert(1)</script>'
+    text = header_of(supplier("Vertexa", 1, eligible=False, result=card_result(failed=((evil, evil),))))
+    assert "<script>" not in text and "&lt;script&gt;" in text
+
+
+def test_a_not_eligible_supplier_whose_must_have_names_are_not_the_seeded_ones_shows_the_name_and_reason():
+    text = header_of(supplier("BrightPath Tech", 1, eligible=False))                       # the default failed check is called "Warranty"
+    assert "<strong>Not eligible:</strong> Warranty: 1 year (at least 3 required)</span>" in text
+
+
+def test_a_failed_evaluation_is_not_eligible_because_the_evaluation_failed():
+    text = header_of(supplier("Vertexa", 1, eligible=False, result=seeded_result(evaluation_failed=True)))
+    assert "<strong>Not eligible:</strong> the evaluation failed</span>" in text
+    assert f'title="{html.escape(tab_overview.EVALUATION_FAILED_TEXT)}"' in text
+
+
+def test_a_supplier_with_no_must_haves_on_record_is_not_said_to_meet_them():
+    text = header_of(supplier("Apex", 1, result={"criteria": []}))
+    grey = S.STATUS_COLOURS[S.NEUTRAL]
+    assert f'style="color:{grey[0]};background:{grey[1]}">– No must-haves were checked</span>' in text
+    assert "Meets every must-have" not in text and f"border-left-color:{theme.TEAL}" in text
+
+
+def test_the_status_says_what_it_is_made_of():
+    cards = scorecards_of(supplier("Apex", 1), supplier("Nexa", 2, eligible=False, result=seeded_result(delivery="12 weeks (at most 8 allowed)")),
+                          supplier("Orbit", 3, result={})).cards
+    assert S.status_of(cards[0]) == S.Status("good", "Meets every must-have", None, None)
+    assert S.status_of(cards[1]) == S.Status("bad", "Not eligible:", "delivery over 8 weeks", "Delivery: 12 weeks (at most 8 allowed)")
+    assert S.status_of(cards[2]) == S.Status("neutral", "No must-haves were checked", None, None)
+    nameless = replace(cards[1], row=replace(cards[1].row, problems=(), why_not=()))          # not eligible, but nothing to say why
+    assert S.status_of(nameless) == S.Status("bad", "Not eligible", None, None)
+
+
+def test_the_score_vs_other_bids_is_the_big_number_with_the_ppi_tooltip():
+    text = header_of(supplier("Apex", 1, ppi=87.784))
+    assert '<div class="sc-score-label">Score vs other bids</div>' in text
+    assert '<span class="sc-score-num">87.78</span><span class="sc-score-max"> / 100</span>' in text
+    assert f'<div class="sc-score-box" title="{html.escape(tab_new_evaluation.PPI_HELP)}">' in text
+
+
+def test_the_big_number_always_has_two_decimals():
+    assert '<span class="sc-score-num">80.00</span>' in header_of(supplier("Apex", 1, ppi=80))
 
 
 def test_names_from_a_proposal_cannot_inject_html():
@@ -418,17 +496,129 @@ def test_names_from_a_proposal_cannot_inject_html():
         assert "<script>" not in html_text and "&lt;script&gt;" in html_text
 
 
-def test_the_facts_strip_has_a_tile_per_fact_and_greys_out_what_is_not_stated():
+def test_a_criterion_name_from_the_model_cannot_inject_html_into_the_areas_or_the_good_and_bad_points():
+    evil = "<img src=x onerror=alert(1)>"
+    result = card_result()
+    result["criteria"][0] = criterion(1, evil, 30, 9, benchmark=9)           # a best mark, so it is a good point
+    result["criteria"][1] = criterion(2, evil + "2", 20, 1, benchmark=9)     # far behind the best, so it is a weak point
+    card = card_of(result=result)
+    for text in (S.areas_html(card.lines), S.reasons_html(card.row.pros, card.row.cons)):
+        assert "<img" not in text and "&lt;img src=x onerror=alert(1)&gt;" in text
+    assert "&lt;img src=x onerror=alert(1)&gt;2" in S.reasons_html(card.row.pros, card.row.cons)
+
+
+# ---------------------------------------------------------------- R1b: the five key-fact tiles
+
+WITHIN = {**FULL_FACTS, "grand_total_rs": 5600000}        # inside the default budget of Rs 60 lakh
+
+
+def price_tile(total: float | None, **run_options) -> str:
+    facts = dict(FULL_FACTS)
+    if total is None:
+        facts.pop("grand_total_rs")
+    else:
+        facts["grand_total_rs"] = total
+    card = scorecards_of(supplier("Apex", 1, result=card_result(facts=facts)), **run_options).cards[0]
+    return S.tile_html(card.facts[0], card.row.price)
+
+
+def test_a_stated_fact_is_a_plain_tile_with_its_icon_label_value_and_detail():
+    assert S.tile_html(S.KeyFact("Warranty", "3 years", "On-site cover")) == (
+        '<div class="sc-fact"><div class="sc-fact-label"><span class="sc-fact-icon" aria-hidden="true">\U0001F6E1️</span>Warranty</div>'
+        '<div class="sc-fact-value">3 years</div><div class="sc-fact-detail">On-site cover</div></div>')
+
+
+@pytest.mark.parametrize("label", ["Total price", "Warranty", "Delivery", "Battery", "RAM / SSD"])
+def test_a_fact_the_proposal_does_not_state_is_a_red_tinted_tile_that_says_not_stated(label):
+    tile = S.tile_html(S.KeyFact(label, None, None))
+    assert tile.startswith('<div class="sc-fact sc-bad">') and '<div class="sc-fact-value sc-unstated">Not stated</div>' in tile
+
+
+def test_a_detail_still_shows_under_a_value_that_is_not_stated():
+    tile = S.tile_html(S.key_facts({"unit_price_rs": 59000})[0])
+    assert tile.startswith('<div class="sc-fact sc-bad">') and "Not stated" in tile and "Rs 59,000 per laptop" in tile
+
+
+def test_each_tile_has_its_own_icon_and_the_icons_are_decoration_only():
+    text = S.facts_html(S.key_facts(WITHIN))
+    icons = ["\U0001F4B0", "\U0001F6E1️", "\U0001F69A", "\U0001F50B", "\U0001F4BE"]
+    positions = [text.index(icon) for icon in icons]
+    assert positions == sorted(positions) and len(set(positions)) == 5
+    assert text.count('aria-hidden="true"') == 5
+    assert "sc-fact-icon" not in S.tile_html(S.KeyFact("Something else", "x", None))      # a label without an icon gets none
+
+
+def test_a_price_over_the_budget_turns_the_price_tile_red_and_says_by_how_much():
+    tile = price_tile(7398600)                                         # Rs 73,98,600 against the run's Rs 60 lakh
+    assert tile.startswith('<div class="sc-fact sc-bad">')
+    assert '<div class="sc-over">Rs 13.99 lakh over budget</div>' in tile
+    assert "Rs 73,98,600" in tile and "Rs 59,000 per laptop" in tile and tile.index("over budget") < tile.index("per laptop")
+    assert "Not stated" not in tile
+
+
+def test_a_price_inside_the_budget_is_a_plain_tile():
+    tile = price_tile(5600000)
+    assert tile.startswith('<div class="sc-fact">') and "over budget" not in tile and "Rs 56,00,000" in tile
+
+
+def test_the_budget_is_the_runs_own_not_a_fixed_one():
+    assert price_tile(5600000).startswith('<div class="sc-fact">')                                      # inside the default Rs 60 lakh
+    smaller = price_tile(5600000, budget_rs=4500000)                                                    # but over a Rs 45 lakh run
+    assert smaller.startswith('<div class="sc-fact sc-bad">') and '<div class="sc-over">Rs 11 lakh over budget</div>' in smaller
+    assert "over budget" not in price_tile(7398600, budget_rs=8000000)                                  # the dearer bid fits a bigger run
+
+
+def test_a_price_exactly_on_the_budget_is_not_over_it():
+    tile = price_tile(6000000)
+    assert tile.startswith('<div class="sc-fact">') and "over budget" not in tile
+    assert '<div class="sc-over">Rs 0.01 lakh over budget</div>' in price_tile(6001000)                 # Rs 1,000 over still says so
+
+
+def test_a_run_saved_without_a_budget_never_says_over_budget():
+    assert price_tile(7398600, budget_rs=None, quantity=None).startswith('<div class="sc-fact">')
+
+
+def test_a_price_that_is_not_stated_says_not_stated_not_over_budget():
+    tile = price_tile(None, budget_rs=4500000)
+    assert tile.startswith('<div class="sc-fact sc-bad">') and "Not stated" in tile and "over budget" not in tile
+
+
+def test_only_the_price_tile_ever_says_over_budget():
+    over = insights.PriceFacts(7398600.0, 6000000.0, False, 1398600.0)
+    tile = S.tile_html(S.KeyFact("Delivery", "6 weeks", None), over)
+    assert tile.startswith('<div class="sc-fact">') and "over budget" not in tile
+
+
+def test_a_price_tile_without_a_value_never_claims_to_be_over_budget_whatever_it_is_told():
+    over = insights.PriceFacts(7398600.0, 6000000.0, False, 1398600.0)
+    tile = S.tile_html(S.KeyFact("Total price", None, None), over)
+    assert "Not stated" in tile and "over budget" not in tile
+
+
+def test_one_missing_half_of_ram_and_ssd_does_not_tint_the_tile_but_says_which_half():
+    tile = S.tile_html(S.key_facts({"ram_gb": 16})[4])
+    assert tile.startswith('<div class="sc-fact">') and "16 GB RAM" in tile and "SSD not stated" in tile
+
+
+def test_the_facts_strip_has_a_tile_per_fact_in_order_and_reddens_what_is_not_stated():
     text = S.facts_html(S.key_facts({"delivery_weeks": 6}))
     positions = [text.index(label) for label in ("Total price", "Warranty", "Delivery", "Battery", "RAM / SSD")]
     assert positions == sorted(positions)
-    assert text.count('class="sc-fact-value sc-unstated">Not stated<') == 4
-    assert 'class="sc-fact-value">6 weeks<' in text
+    assert text.count('class="sc-fact-value sc-unstated">Not stated<') == 4 and text.count('<div class="sc-fact sc-bad">') == 4
+    assert 'class="sc-fact-value">6 weeks<' in text and text.count('<div class="sc-fact">') == 1
+
+
+def test_the_facts_strip_passes_the_budget_to_the_price_tile():
+    over = insights.PriceFacts(7398600.0, 6000000.0, False, 1398600.0)
+    text = S.facts_html(S.key_facts(FULL_FACTS), over)
+    assert "Rs 13.99 lakh over budget" in text and text.count('<div class="sc-fact sc-bad">') == 1
+    assert "over budget" not in S.facts_html(S.key_facts(FULL_FACTS))              # without a budget to compare with, nothing is said
 
 
 def test_the_facts_strip_shows_the_detail_under_the_value():
-    text = S.facts_html(S.key_facts(FULL_FACTS))
-    assert "Rs 73,98,600" in text and "Rs 59,000 per laptop" in text and "On-site cover" in text and ">Measured<" in text
+    text = S.facts_html(S.key_facts(WITHIN))
+    assert "Rs 56,00,000" in text and "Rs 59,000 per laptop" in text and "On-site cover" in text and ">Measured<" in text
+    assert "sc-bad" not in text.split("</style>")[1]               # nothing is missing and nothing is over the budget
 
 
 def test_the_criterion_table_has_the_spec_columns_in_order_with_hover_help_on_the_calculated_ones():
@@ -512,6 +702,309 @@ def test_the_checks_table_prints_passed_or_not_passed_in_the_theme_colours():
 def test_the_warnings_are_a_list_in_order():
     text = S.warnings_html(("First", "Second"))
     assert text.index("<li>First</li>") < text.index("<li>Second</li>") and text.count("<li>") == 2
+
+
+# ---------------------------------------------------------------- R1b: what is good and what to watch out for
+
+def boxes(text: str) -> list[str]:
+    """The two cards of reasons_html: [what's good, watch out]."""
+    return text.split('<div class="sc-box"')[1:]
+
+
+def test_the_good_points_are_on_the_left_and_the_things_to_watch_on_the_right_as_chosen_by_insights():
+    card = card_of()                                                  # marks 9, 7, 5, 9, 8 against the best 9, 9, 8, 9, 9
+    good, watch = boxes(S.reasons_html(card.row.pros, card.row.cons))
+    assert f"✓ {html.escape(S.GOOD_TITLE)}</div>" in good and f"⚠ {S.WATCH_TITLE}</div>" in watch
+    wanted_good = ["Strong on Laptop specs (9/10, best of all bids)", "Strong on Security (9/10, best of all bids)", "Meets every must-have"]
+    assert [r.text for r in card.row.pros] == wanted_good and [r.text for r in card.row.cons] == ["Weaker on Value for money (5/10; best bid 8/10)"]
+    positions = [good.index(text) for text in wanted_good]
+    assert positions == sorted(positions) and good.count("<li>") == 3
+    assert "Weaker on Value for money (5/10; best bid 8/10)" in watch and watch.count("<li>") == 1
+    assert not any(text in watch for text in wanted_good) and "Weaker on" not in good
+
+
+def test_each_point_says_what_it_was_measured_against():
+    row = card_of().row
+    good, watch = boxes(S.reasons_html(row.pros, row.cons))
+    assert '<span class="sc-basis"> · vs this batch</span>' in good and '<span class="sc-basis"> · vs requirement</span>' in good
+    assert '<span class="sc-basis"> · vs this batch</span>' in watch
+
+
+def test_the_lists_hold_at_most_three_points_each():
+    scores = (10, 10, 10, 10, 10)
+    result = card_result(scores=scores)
+    for item in result["criteria"]:
+        item["benchmark"], item["gap"], item["relative_pct"] = 10, 0, 100                 # the best on all five, and every must-have passed
+    card = card_of(result=result)
+    good, _watch = boxes(S.reasons_html(card.row.pros, card.row.cons))
+    assert good.count("<li>") == insights.PROS_MAX == 3
+    weak = card_result(scores=(0, 0, 0, 0, 0))
+    card = card_of(result=weak)
+    _good, watch = boxes(S.reasons_html(card.row.pros, card.row.cons))
+    assert watch.count("<li>") == insights.CONS_MAX == 3
+
+
+def test_a_must_have_that_failed_is_a_red_cross_and_other_weak_points_an_amber_warning_sign():
+    card = scorecards_of(supplier("BrightPath Tech", 1, eligible=False)).cards[0]
+    good, watch = boxes(S.reasons_html(card.row.pros, card.row.cons))
+    cross = f'<span class="sc-ico" style="color:{theme.PILL_BAD[0]}">✗</span>Not eligible: Warranty — 1 year (at least 3 required)'
+    warn = f'<span class="sc-ico" style="color:{theme.PILL_WARN[0]}">⚠</span>Weaker on Value for money'
+    assert cross in watch and warn in watch and watch.index(cross) < watch.index(warn)
+    tick = f'<span class="sc-ico" style="color:{theme.PILL_GOOD[0]}">✓</span>Strong on Laptop specs'
+    assert tick in good and "Meets every must-have" not in good
+
+
+def test_when_there_is_nothing_to_say_each_card_says_so_calmly():
+    text = S.reasons_html((), ())
+    good, watch = boxes(text)
+    assert tab_overview.NOTHING_STANDS_OUT in good and S.NOTHING_TO_WATCH in watch
+    assert "<li>" not in text and text.count('<li class="sc-basis">') == 2
+
+
+# ---------------------------------------------------------------- R1b: how it did on each area
+
+def area_lines(*marks: float, maximum: float = 10.0) -> tuple[S.Line, ...]:
+    """Criterion lines for the five marking-scheme criteria with these marks (the best mark is the maximum)."""
+    return S._lines({"criteria": [criterion(i, n, w, m, benchmark=maximum, max_score=maximum) for (i, n, w), m in zip(CRITERIA, marks)]})
+
+
+def area_row(text: str, label: str) -> str:
+    """The table row of the area with this on-screen label."""
+    end = text.index(f"{label}</span></td>")
+    start = text.rindex("<tr>", 0, end)
+    return text[start: text.index("</tr>", start) + len("</tr>")]
+
+
+@pytest.mark.parametrize("score, maximum, dots, word", [
+    (0, 10, 0, "Weak"), (4, 10, 2, "Weak"), (7, 10, 4, "Average"), (10, 10, 5, "Strong"),          # out of 10, as in the change pack
+    (5, 5, 5, "Strong"), (3, 5, 3, "Average"), (0, 5, 0, "Weak"), (2, 5, 2, "Weak"),               # out of 5
+    (5, 10, 3, "Average"), (8, 10, 4, "Strong"), (9.5, 10, 5, "Strong")])
+def test_the_meter_fills_the_dots_for_the_mark_and_the_word_follows_the_same_mark(score, maximum, dots, word):
+    row = area_row(S.areas_html(area_lines(score, 1, 1, 1, 1, maximum=maximum)), "Laptop specs")
+    assert (row.count(S.DOT_FILLED), row.count(S.DOT_EMPTY)) == (dots, 5 - dots)
+    colour, background = theme.STRENGTH_COLOURS[word]
+    assert f'<span class="sc-word" style="color:{colour};background:{background}">{word}</span>' in row
+    assert f'aria-label="{dots} of 5 dots"' in row and f'title="{score:g} out of {maximum:g}"' in row
+
+
+def test_filled_dots_carry_the_strength_colour_and_empty_ones_the_meter_grey():
+    row = area_row(S.areas_html(area_lines(7, 1, 1, 1, 1)), "Laptop specs")
+    average = theme.STRENGTH_COLOURS["Average"][0]
+    assert f'<span style="color:{average}">{S.DOT_FILLED * 4}</span><span style="color:{theme.METER_EMPTY}">{S.DOT_EMPTY}</span>' in row
+    row = area_row(S.areas_html(area_lines(10, 1, 1, 1, 1)), "Laptop specs")
+    assert f'<span style="color:{theme.STRENGTH_COLOURS["Strong"][0]}">{S.DOT_FILLED * 5}</span><span style="color:{theme.METER_EMPTY}"></span>' in row
+
+
+def test_each_area_is_shown_by_its_everyday_name_with_the_real_name_on_hover_in_scheme_order():
+    text = S.areas_html(area_lines(9, 7, 5, 9, 8))
+    pairs = (("Technical Capability", "Laptop specs"), ("Implementation Plan", "Delivery plan"), ("Commercial Value", "Value for money"),
+             ("Security & Compliance", "Security"), ("Support & Experience", "Support"))
+    for real, plain in pairs:
+        assert f'<td class="sc-area-name"><span title="{html.escape(real)}">{plain}</span></td>' in text
+        assert f">{html.escape(real)}<" not in text
+    positions = [text.index(f">{plain}<") for _real, plain in pairs]
+    assert positions == sorted(positions)
+
+
+def test_a_criterion_without_an_everyday_name_shows_its_own_name_and_no_hover():
+    text = S.areas_html(S._lines({"criteria": [criterion(9, "Sustainability", 5, 7)]}))
+    assert '<td class="sc-area-name"><span>Sustainability</span></td>' in text
+
+
+def test_not_stated_follows_an_area_the_proposal_does_not_address_or_the_model_did_not_mark():
+    result = card_result()
+    result["criteria"][2] = criterion(3, "Commercial Value", 20, 0, benchmark=8, evidence="Not stated in the proposal")
+    result["criteria"][3] = criterion(4, "Security & Compliance", 20, 0, filled=True, evidence="Some text", justification="No result returned")
+    text = S.areas_html(card_of(result=result).lines)
+    assert f'<span title="{html.escape(S.NOT_STATED_HOVER)}">· not stated</span>' in area_row(text, "Value for money")
+    assert f'<span title="{html.escape(S.NO_RESULT_HOVER)}">· not stated</span>' in area_row(text, "Security")
+    for other in ("Laptop specs", "Delivery plan", "Support"):
+        assert "not stated" not in area_row(text, other)
+    assert text.count("· not stated") == 2
+    assert "Weak" in area_row(text, "Security") and S.DOT_FILLED not in area_row(text, "Security")      # still marked: 0 dots, Weak
+
+
+def test_a_zero_that_the_model_gave_with_evidence_is_not_called_not_stated():
+    result = card_result()
+    result["criteria"][1] = criterion(2, "Implementation Plan", 20, 0, benchmark=9)
+    assert "not stated" not in area_row(S.areas_html(card_of(result=result).lines), "Delivery plan")
+
+
+def test_marks_that_cannot_be_drawn_show_n_a_without_dots_or_a_word():
+    lines = S._lines({"criteria": [{"criterion_id": 1, "name": "Technical Capability", "score": None},
+                                    {"criterion_id": 2, "name": "Implementation Plan", "score": 5, "max_score": 0}]})
+    text = S.areas_html(lines)
+    for label in ("Laptop specs", "Delivery plan"):
+        row = area_row(text, label)
+        assert '<td class="sc-na">n/a</td><td></td>' in row and S.DOT_FILLED not in row and S.DOT_EMPTY not in row
+
+
+def test_the_word_comes_from_the_spec_thresholds():
+    line = S.Line(1, "A", 8, 10, 8, 0, 100, 10, "", "", None)
+    assert S.strength_of(line) == "Strong"
+    assert S.strength_of(replace(line, score=5)) == "Average" and S.strength_of(replace(line, score=4.9)) == "Weak"
+    assert S.strength_of(replace(line, score=None)) is None and S.strength_of(replace(line, max_score=None)) is None
+    assert S.strength_of(replace(line, max_score=0)) is None
+
+
+# ---------------------------------------------------------------- R1b: the page, top to bottom
+
+class _Column:
+    def __init__(self, page: "_Page") -> None:
+        self._page = page
+
+    def metric(self, label, value, **kwargs):
+        self._page.calls.append(("metric", f"{label}: {value}"))
+
+
+class _Page:
+    """A recording stand-in for the parts of Streamlit that one scorecard is drawn with, to check what is drawn and in what order."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.expanders: list[tuple[str, bool]] = []
+
+    def markdown(self, text, **kwargs):
+        self.calls.append(("markdown", str(text)))
+
+    def error(self, text, **kwargs):
+        self.calls.append(("error", str(text)))
+
+    def info(self, text, **kwargs):
+        self.calls.append(("info", str(text)))
+
+    def plotly_chart(self, figure, **kwargs):
+        self.calls.append(("plotly_chart", "<<chart>>"))
+
+    def columns(self, count, **kwargs):
+        return [_Column(self) for _ in range(count)]
+
+    def expander(self, label, expanded=False, **kwargs):
+        page = self
+        page.expanders.append((label, expanded))
+        page.calls.append(("expander", label))
+
+        class _Open:
+            def __enter__(self_inner):
+                page.calls.append(("enter", label))
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                page.calls.append(("exit", label))
+                return False
+
+        return _Open()
+
+
+def drawn(*suppliers: dict[str, Any], pick: int = 0, **options) -> tuple[_Page, S.Scorecard]:
+    page = _Page()
+    card = scorecards_of(*suppliers, **options).cards[pick]
+    original = S.st
+    S.st = page
+    try:
+        S._show_card(card)
+    finally:
+        S.st = original
+    return page, card
+
+
+def split_page(page: _Page) -> tuple[str, str]:
+    """(everything drawn outside the expander, everything drawn inside it)."""
+    enter = next(i for i, (kind, _t) in enumerate(page.calls) if kind == "enter")
+    leave = next(i for i, (kind, _t) in enumerate(page.calls) if kind == "exit")
+    text = lambda calls: "\n".join(t for _k, t in calls)      # noqa: E731
+    return text(page.calls[:enter]), text(page.calls[enter:leave])
+
+
+def test_the_page_order_is_header_facts_good_and_bad_areas_chart_then_the_calculation():
+    page, _card = drawn(supplier("Apex Systems", 1), supplier("Orbit", 2))
+    assert page.calls[0][1].startswith("<style>") and '<div class="sc-head"' in page.calls[0][1]
+    assert "Submitted 5 Oct 2026 · Experience rating: 3" in page.calls[1][1]
+    everything = "\n".join(t for _k, t in page.calls)
+    needles = ['<div class="sc-head"', "#### Key facts", '<div class="sc-facts"', '<div class="sc-two"', "#### How it did on each area",
+               '<table class="sc-areas"', "#### Score vs best", "<<chart>>", S.CALCULATION_LABEL, "#### Criterion by criterion",
+               '<table class="sc-table"', "#### Compared with typical laptop deals", "#### Must-haves", "#### Warnings"]
+    positions = [everything.index(needle) for needle in needles]
+    assert positions == sorted(positions) and len(set(positions)) == len(needles)
+
+
+def test_the_page_tells_the_tiles_about_the_runs_budget():
+    page, _card = drawn(supplier("Apex Systems", 1))                                      # Rs 73,98,600 in a run with a Rs 60 lakh budget
+    outside, _inside = split_page(page)
+    assert "Rs 13.99 lakh over budget" in outside
+    page, _card = drawn(supplier("Apex Systems", 1), budget_rs=8000000)
+    assert "over budget" not in split_page(page)[0]
+
+
+def test_the_dots_are_explained_under_the_areas():
+    page, _card = drawn(supplier("Apex Systems", 1))
+    outside, inside = split_page(page)
+    assert html.escape(S.AREAS_NOTE) in outside and "Five dots mean full marks" in outside and S.AREAS_NOTE not in inside
+
+
+def test_the_calculation_is_closed_and_holds_the_f11_tables_the_scores_and_the_warnings():
+    result = card_result(warnings=["Unit price estimated from total"])
+    page, card = drawn(supplier("Apex Systems", 1, overall=77.0, ppi=86.94, industry_score=62.5, result=result))
+    assert page.expanders == [(S.CALCULATION_LABEL, False)]
+    outside, inside = split_page(page)
+    assert inside.index("Overall /100: 77.00") < inside.index("Score vs other bids (PPI): 86.94") < inside.index("Industry score: 62.50")
+    headings = [line for line in inside.split("\n") if line.startswith("####")]
+    assert headings == ["#### Criterion by criterion", "#### Compared with typical laptop deals", "#### Must-haves", "#### Warnings"]
+    assert S.criteria_html(card.lines) in inside and S.industry_html(card.attributes) in inside
+    assert S.gates_html(card.gates) in inside and S.warnings_html(card.warnings) in inside
+    assert "Industry score 62.50 out of 100." in inside and html.escape(S.CRITERIA_NOTE) in inside
+    assert "<table" not in outside.replace('<table class="sc-areas"', "")           # the only table outside is the areas list
+    assert "Evidence" not in outside and "Benchmark" not in outside and "Relative %" not in outside
+
+
+def test_the_headline_scores_are_in_the_header_and_all_three_numbers_are_in_the_calculation():
+    page, _card = drawn(supplier("Apex Systems", 1, overall=77.0, ppi=86.94, industry_score=62.5))
+    outside, inside = split_page(page)
+    assert "86.94" in outside and "77.00" not in outside and "62.50" not in outside        # only the one big number up top
+    assert "77.00" in inside and "86.94" in inside and "62.50" in inside
+
+
+def test_a_supplier_with_no_warnings_says_so_inside_the_calculation():
+    page, _card = drawn(supplier("Apex Systems", 1))
+    outside, inside = split_page(page)
+    assert S.NO_WARNINGS_TEXT in inside and S.NO_WARNINGS_TEXT not in outside
+
+
+def test_a_failed_evaluation_keeps_its_red_message_at_the_top_outside_the_calculation():
+    result = card_result(evaluation_failed=True, warnings=["Evaluation failed: bad reply."])
+    page, _card = drawn(supplier("Vertexa Solutions", 1, eligible=False, result=result))
+    error_at = next(i for i, (kind, _t) in enumerate(page.calls) if kind == "error")
+    enter = next(i for i, (kind, _t) in enumerate(page.calls) if kind == "enter")
+    key_facts_at = next(i for i, (_k, t) in enumerate(page.calls) if t == "#### Key facts")
+    assert page.calls[error_at][1] == S.EVALUATION_FAILED_TEXT and error_at < key_facts_at < enter
+    outside, inside = split_page(page)
+    assert "Evaluation failed: bad reply." in inside and "Evaluation failed: bad reply." not in outside
+    assert '<div class="sc-two"' not in outside and tab_overview.NOTHING_TO_SHOW in outside        # no praise or blame for a failed run
+    assert "<strong>Not eligible:</strong> the evaluation failed" in outside
+
+
+def test_the_old_screen_words_are_gone_and_the_new_ones_are_there():
+    page, _card = drawn(supplier("Apex", 1, eligible=False), supplier("Nexa", 2))
+    everything = "\n".join(t for _k, t in page.calls)
+    for old in ("Mandatory checks", "Peer score", "Industry comparison", ">Eligible<"):
+        assert old not in everything, old
+    for new in ("#### Must-haves", "Score vs other bids (PPI)", "#### Compared with typical laptop deals", "Not eligible"):
+        assert new in everything, new
+
+
+def test_a_supplier_with_nothing_saved_gets_friendly_notes_not_blanks():
+    page, _card = drawn(supplier("Apex Systems", 1, result={}))
+    assert ("info", S.NO_CRITERIA_TEXT) in page.calls and ("info", S.NO_CHART_TEXT) in page.calls
+    outside, inside = split_page(page)
+    assert S.NO_INDUSTRY_TEXT in inside and S.NO_CHECKS_TEXT in inside and S.NO_WARNINGS_TEXT in inside
+    assert not any(kind == "plotly_chart" for kind, _t in page.calls) and '<table class="sc-areas"' not in outside
+
+
+def test_a_card_with_marks_draws_the_chart_once_between_the_areas_and_the_calculation():
+    page, _card = drawn(supplier("Apex Systems", 1))
+    kinds = [kind for kind, _t in page.calls]
+    assert kinds.count("plotly_chart") == 1
+    assert next(i for i, k in enumerate(kinds) if k == "plotly_chart") < kinds.index("expander")
 
 
 # ---------------------------------------------------------------- a real batch, read back
@@ -647,13 +1140,16 @@ def test_a_saved_run_shows_the_picker_the_recommended_supplier_and_every_section
     picker = tab.selectbox(key="sc_supplier_RUN-TEST-SCORECARDS")
     assert picker.options == ["1. Apex Systems", "2. NexaWorks", "3. Orbit Digital"] and picker.value == "2. NexaWorks"
     text = shown(tab)
-    for expected in ("Supplier scorecard · Ranked 2 of 3", "NexaWorks", "Recommended", "Key facts", "Score vs best", "Criterion by criterion",
-                     "Industry comparison", "Mandatory checks", "Warnings", "Rs 73,98,600", "No warnings for this supplier.",
-                     "Submitted 5 Oct 2026 · Experience rating: 3"):
+    for expected in ("Supplier scorecard · Ranked 2 of 3", "NexaWorks", "Recommended", "Meets every must-have", "Key facts", "Rs 73,98,600",
+                     "Rs 13.99 lakh over budget", "How it did on each area", "Laptop specs", "Score vs best", "Warnings", "No warnings for this supplier.",
+                     "Submitted 5 Oct 2026 · Experience rating: 3", "Criterion by criterion", "Compared with typical laptop deals", "Must-haves"):
         assert expected in text
+    assert html.escape(S.GOOD_TITLE) in text and S.WATCH_TITLE in text
     for in_a_table in ("Implementation Plan", "Rs 73,986 per laptop", "6 weeks (at most 8 allowed)"):    # criteria, industry and checks tables
         assert in_a_table in text
-    assert [m.label for m in tab.metric] == ["Overall /100", "Peer score (PPI)", "Industry score"]
+    for old_words in ("Mandatory checks", "Peer score", "Industry comparison"):
+        assert old_words not in text
+    assert [m.label for m in tab.metric] == ["Overall /100", "Score vs other bids (PPI)", "Industry score"]
     assert len(tab.get("plotly_chart")) == 1
 
 
@@ -677,9 +1173,9 @@ def test_a_supplier_with_a_failed_check_a_missing_criterion_and_a_warning_shows_
     assert not app.exception
     text = shown(scorecards_tab(app))
     assert "No price table" in text and "Not passed" in text
-    assert "No result returned" in text and "Not stated in the proposal" in text
+    assert "No result returned" in text and "Not stated in the proposal" in text and "\u00b7 not stated" in text
     assert "was missing from the reply and was set to 0." in text and "No warnings for this supplier." not in text
-    assert ">Not eligible<" in text
+    assert "<strong>Not eligible:</strong>" in text
 
 
 @needs_app_test
