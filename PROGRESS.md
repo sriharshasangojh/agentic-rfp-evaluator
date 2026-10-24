@@ -44,5 +44,5 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | Report | PDF report and mail link (extension) | In review | 2026-10-25 | tools/report.py, ui/report.py, 9 tests; rapidfuzz pinned | 0 |
 | M3 | Milestone: push | Pre-push checks done; waiting for the user's "yes" | 2026-10-25 | | |
 | F22 | README and sample run | In review | 2026-10-25 | README (spec 19, with known differences), samples/sample_run.json, tests/test_docs.py (4) | 0 |
-| F23 | Deployment readiness | Not started | | | |
-| M4 | Milestone: final push | Not started | | | |
+| F23 | Deployment readiness | In review | 2026-10-25 | Pinned imports audit, clean-copy compile and test run, spec 21 checklist in DECISIONS | 0 |
+| M4 | Milestone: final push | Waiting for the user's "yes" | | | |

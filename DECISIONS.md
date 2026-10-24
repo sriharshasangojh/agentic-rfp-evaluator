@@ -989,3 +989,28 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 - README follows spec section 19 and lists every extension and known difference from the build prompt (3 rounds, price formula only on request, two picks, return to best fit, one negotiation supplier, report, buttons not offered).
 - `samples/sample_run.json` is produced by the app's own export function from an offline run with a scripted test model (`test-model`), so it shows the format with no key and no live data. Replace it after your live run if you want a real one.
 - `tests/test_docs.py` checks the README topics, that named files exist and that the sample has exactly the export keys.
+
+## F23: Deployment readiness and the final checklist (spec section 21)
+
+Checked in the build workspace (no internet to PyPI there, so a real `pip install` could not be run; do it on your machine):
+- Every third-party package imported by the app (streamlit, pandas, plotly, pydantic, pymupdf, pypdf, httpx, litellm, rapidfuzz) is pinned in `requirements.txt`; only `pytest` is a dev tool. No Playwright.
+- A clean copy of the project (no caches, no `.db`) compiles, and the full suite passes there: 2405 passed, 33 skipped (the skipped ones are AppTest files that need the real Streamlit).
+- Paths use `pathlib`; `.streamlit/config.toml` holds the theme; `.gitignore` ignores secrets, `*.db`, `.venv/`, `snapshots/`.
+
+| Spec 21 item | Status |
+|---|---|
+| All unit tests pass | Ticked in the build workspace (2405). Run `pytest -q` on your machine. |
+| No LLM call in ranking, industry, insights, gates | Ticked: none of those four files imports litellm/openai or `llm`. |
+| Criteria from SQLite; prompt changes when a criterion is deactivated | Ticked (F02/F08 tests). |
+| Tie-break order and explanations | Ticked (F03 tests; shown on Overview). |
+| Keys nowhere in DB, logs, exports | Ticked by tests that search the database, the audit rows and the export for the key. Re-check after your live run. |
+| `<proposal>` tags and untrusted-data rule in every prompt | Ticked (F08 and later prompt tests). |
+| Exactly 8 tabs and 6 charts | Ticked (app TABS; 6 `plotly_chart` calls). The report added none. |
+| "Not happy?" flow and re-evaluation cap | Ticked with a change: **3** rounds (user's decision), tab "Re-evaluation". |
+| Audit records every change; original ranking kept | Ticked (F21; `restore_original` also keeps the best-fit ranking). |
+| JSON export matches section 15 | Ticked (keys tested; `samples/sample_run.json`). |
+| One local commit per approved feature; nothing pushed without "yes" | Ticked. Pushed so far: up to M2. |
+| Pre-push checks (20.3) pass | Done at M3; repeat at M4. |
+| Deploys on Streamlit Cloud and the demo script works live | **Yours to do**: deploy, then one live run with your own key. |
+
+Still open for you: 82a (shared SQLite or one database per visitor on a public link) and 124 (neutral header text), both only when you deploy; item 70 (editable baselines and gates) is listed as future scope.
