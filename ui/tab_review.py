@@ -37,6 +37,7 @@ from agents import orchestrator
 from db import repository
 from tools import insights, review, reweight
 from ui import picks as picks_view
+from ui import report as report_view
 from ui import sidebar, tab_audit, tab_overview, theme
 from ui.tab_new_evaluation import READ_ONLY_KEY, SHOWN_RUN_KEY
 
@@ -678,6 +679,8 @@ def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.Negot
     if view.rounds_left > 0:
         _negotiation(run_id, view, negotiations, read_only)
     _details(view)
+    if view.recommended:
+        report_view.show(st, run_id)                     # the report: PDF download and a mail link
 
 
 def render() -> None:

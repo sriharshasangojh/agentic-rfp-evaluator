@@ -487,6 +487,13 @@ class _Page:
         self.buttons[key] = {"label": label, **kwargs}
         return False
 
+    def download_button(self, label, data=None, key=None, **kwargs):
+        self._record("download_button", label, key=key, size=len(data), **kwargs)
+        return False
+
+    def link_button(self, label, url, key=None, **kwargs):
+        self._record("link_button", label, url=url, key=key, **kwargs)
+
     def text(self, *kinds: str) -> str:
         return "\n".join(text for kind, text, _kw in self.calls if not kinds or kind in kinds)
 
@@ -616,7 +623,7 @@ def test_a_database_that_cannot_be_read_gets_a_friendly_message_not_a_traceback(
 
 def test_the_page_shows_the_recommendation_and_the_question_and_keeps_the_tables_in_closed_drop_downs(monkeypatch, run_id):
     page = draw(open_page(monkeypatch, run_id))
-    assert headings(page) == ["#### Where things stand", "#### Your answer", "#### More detail"]
+    assert headings(page) == ["#### Where things stand", "#### Your answer", "#### More detail", "#### Report"]
     assert T.INTRO_TEXT in page.labels("markdown")
     assert "We recommend Apex Systems" in page.shown("markdown") and "Score against the other bids: 86.94" in page.shown("markdown")
     assert page.drop_down_labels() == ["To do (2)", "Full ranking (5 suppliers)", "What counts for how much"]
@@ -702,7 +709,7 @@ def test_clicking_rank_again_changes_the_priorities_shows_the_new_result_and_sta
     draw(page)
     assert page.text("success", "error") == "" and T.MESSAGE_KEY not in page.session_state       # the page itself shows the result
     assert message not in page.shown("markdown") and "Commercial Value now counts for 30% of the decision (it was 20%)." in page.shown("markdown")
-    assert headings(page) == ["#### Where things stand", "#### What changed last", "#### Your answer", "#### More detail"]
+    assert headings(page) == ["#### Where things stand", "#### What changed last", "#### Your answer", "#### More detail", "#### Report"]
     assert "We recommend NexaWorks" in page.shown("markdown")
     assert page.drop_down_labels() == ["To do (2)", "Full ranking (5 suppliers)", "What counts for how much", "Last round in detail (round 1)",
                                        "History (1 round)"]

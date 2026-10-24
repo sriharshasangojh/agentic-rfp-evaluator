@@ -7,4 +7,4 @@ pypdf==6.21.2
 httpx==0.28.1
 litellm==1.106.2
 pytest==9.1.1
-rapidfuzz
+rapidfuzz==3.14.3
