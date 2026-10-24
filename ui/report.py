@@ -12,7 +12,7 @@ from typing import Any
 from agents import orchestrator
 from db import repository
 from tools import report as report_tool
-from ui import tab_audit, tab_overview
+from ui import tab_audit, tab_overview, theme
 
 NOTE = "Download this evaluation as a PDF, or open your mail app with a short summary and attach the PDF yourself. Nothing is sent from here."
 PDF_LABEL = "Download PDF report"
@@ -45,8 +45,15 @@ def _small(st: Any, text: str) -> None:
 
 FLOAT_KEY = "report_float"
 FLOAT_LABEL = "Report"
-FLOAT_CSS = (f"<style>.st-key-{FLOAT_KEY}{{position:fixed;bottom:1.25rem;right:1.25rem;z-index:1000;width:auto;"
-             f"box-shadow:0 4px 14px rgba(0,0,0,0.25);border-radius:0.6rem;background:#FFFFFF}}</style>")
+FLOAT_CSS = (
+    f"<style>"
+    f".st-key-{FLOAT_KEY}{{position:fixed;bottom:1.5rem;right:1.5rem;z-index:1000;width:auto}}"
+    f".st-key-{FLOAT_KEY} button{{background:{theme.HEADING};border:1px solid {theme.HEADING};border-radius:999px;"
+    f"padding:0.55rem 1.4rem;box-shadow:0 6px 18px rgba(11,79,74,0.35);transition:background 0.15s,transform 0.15s}}"
+    f".st-key-{FLOAT_KEY} button:hover,.st-key-{FLOAT_KEY} button:focus{{background:{theme.PRIMARY};border-color:{theme.PRIMARY};"
+    f"transform:translateY(-1px)}}"
+    f".st-key-{FLOAT_KEY} button,.st-key-{FLOAT_KEY} button *{{color:#FFFFFF !important;fill:#FFFFFF !important;font-weight:600}}"
+    f"</style>")
 
 
 def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] | None, budget: float | None) -> None:
@@ -71,6 +78,6 @@ def floating(st: Any, run_id: str | None) -> None:
     export, picks, budget = built
     with st.container(key=FLOAT_KEY):
         st.markdown(FLOAT_CSS, unsafe_allow_html=True)
-        with st.popover(FLOAT_LABEL, help=NOTE):
+        with st.popover(FLOAT_LABEL, help=NOTE, icon=":material/description:"):
             _small(st, NOTE)
             _offer(st, run_id, export, picks, budget)

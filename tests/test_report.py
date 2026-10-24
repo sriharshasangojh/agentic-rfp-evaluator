@@ -125,7 +125,7 @@ def test_section_offers_download_and_mail_link_for_a_saved_run():
     kinds = [c[0] for c in page.calls]
     assert "download" in kinds and "link" in kinds and ("popover", "Report") in page.calls
     assert ("container", report_ui.FLOAT_KEY) in page.calls
-    assert any(c[0] == "markdown" and "position:fixed" in c[1] and "bottom" in c[1] and "right" in c[1] for c in page.calls)
+    assert any(c[0] == "markdown" and "position:fixed" in c[1] and "#FFFFFF" in c[1] and "bottom" in c[1] and "right" in c[1] for c in page.calls)
     link = [c for c in page.calls if c[0] == "link"][0]
     assert link[2].startswith("mailto:") and KEY not in link[2]
 
