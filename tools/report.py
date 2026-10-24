@@ -1,7 +1,7 @@
 """The report (an extension beyond the spec): the finished evaluation as a readable document to download or to share by email.
 
 Pure functions: `report_html` and `summary_text` turn the audit export (spec section 15, plus the two picks) into text; `report_pdf`
-turns the HTML into PDF bytes with PyMuPDF, which the app already uses to read PDFs. The report holds the same data as the JSON file,
+makes the PDF (with three charts) with ReportLab. The report holds the same data as the JSON file,
 so it never holds an API key or a proposal's full text. Every piece of text goes through `html.escape`.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ MAIL_BODY_MAX = 1200          # a mailto link has a length limit in some mail ap
 
 
 class ReportError(Exception):
-    """The PDF could not be made (PyMuPDF missing or failed). `user_message` is a friendly sentence."""
+    """The PDF could not be made (ReportLab missing or failed). `user_message` is a friendly sentence."""
 
     def __init__(self, user_message: str) -> None:
         super().__init__(user_message)
@@ -60,7 +60,7 @@ def picks_data(picks: Any) -> dict[str, Any] | None:
 
 
 def report_html(export: Mapping[str, Any], picks: Mapping[str, Any] | None = None) -> str:
-    """The whole report as one HTML page (inline styles only, so PyMuPDF can lay it out)."""
+    """The whole report as one HTML page (inline styles only)."""
     rec = export.get("recommendation") or {}
     suppliers = [s for s in export.get("suppliers") or [] if isinstance(s, Mapping)]
     snapshot = [c for c in export.get("criteria_snapshot") or [] if isinstance(c, Mapping)]
