@@ -12,7 +12,7 @@ Everything is read back from the saved run, so what is shown is exactly what was
 except what a reader sees as a picture: the benchmark, gap and relative % were worked out by `tools/ranking.py` when the
 run was saved, the good and bad points are chosen by `tools/insights.py`, and the dots by `insights.meter_dots`.
 
-Not on this tab yet: the "evidence found" tick or cross (F15) and the model's wording of the pros and cons (F16).
+Not on this tab yet: the model's wording of the pros and cons (F16).
 
 The tiles, cards and tables are small pieces of HTML because a Streamlit widget cannot colour a word, tint a tile or show a
 hover text on a badge. Every piece of text that comes from a proposal, from the model or from the buyer goes through
@@ -64,7 +64,8 @@ BENCHMARK_HELP = "The highest mark any supplier received for this criterion in t
 GAP_HELP = "This supplier's mark minus the benchmark. 0 means this supplier is the best on this criterion."
 RELATIVE_HELP = "This supplier's mark as a percentage of the benchmark. If nobody scored above 0 it shows 100%."
 WEIGHT_HELP = "How many of the 100 points this criterion is worth."
-EVIDENCE_HELP = "A quote from the proposal that supports the mark, with its page."
+EVIDENCE_HELP = "A quote from the proposal that supports the mark, with its page. A tick means the quote was found in the proposal; a cross means it was not."
+FOUND_TEXT, NOT_FOUND_TEXT = "✓ Found in the proposal", "✗ Not found in the proposal"
 POINTS_HELP = "Points for the grade: Above 100, Meets 75, Below 25, Not stated 0."
 SHARE_HELP = "How many of the 100 industry points this attribute is worth."
 AREAS_NOTE = ("Five dots mean full marks. Strong: 80% or more of the maximum mark. Average: 50% to under 80%. Weak: under 50%. "
@@ -108,6 +109,8 @@ _CSS = (
     ".sc-num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}"
     ".sc-text{min-width:15rem}"
     f".sc-muted{{color:{MUTED};font-style:italic}}"
+    ".sc-found{display:block;font-size:0.8rem;font-weight:600;color:#1B7F4B;margin-bottom:0.15rem}"
+    f".sc-lost{{display:block;font-size:0.8rem;font-weight:600;color:{FLAG_COLOURS[0]};margin-bottom:0.15rem}}"
     ".sc-word{display:inline-block;padding:0.1rem 0.6rem;border-radius:999px;font-weight:600;font-size:0.85rem;white-space:nowrap}"
     ".sc-word[title]{cursor:help}"
     ".sc-flag{display:inline-block;margin-left:0.5rem;padding:0.05rem 0.5rem;border-radius:999px;font-size:0.75rem;font-weight:600;"
@@ -189,6 +192,7 @@ class Line:
     evidence: str
     justification: str
     flag: str | None        # FLAG_NO_RESULT, FLAG_NOT_STATED or None
+    found: bool | None = None   # the evidence check (F15): True found, False not found, None nothing to check
 
 
 @dataclass(frozen=True)
@@ -304,7 +308,8 @@ def _line(item: dict[str, Any]) -> Line:
         flag = None
     return Line(criterion_id, str(item.get("name") or f"Criterion {criterion_id}"), _number(item.get("score")),
                 _number(item.get("max_score")), _number(item.get("benchmark")), _number(item.get("gap")),
-                _number(item.get("relative_pct")), _number(item.get("weight")), evidence, justification, flag)
+                _number(item.get("relative_pct")), _number(item.get("weight")), evidence, justification, flag,
+                item["evidence_found"] if isinstance(item.get("evidence_found"), bool) else None)
 
 
 def _lines(result: dict[str, Any]) -> tuple[Line, ...]:
@@ -529,6 +534,16 @@ def _text_cell(text: str, empty: str) -> str:
     return f'<td class="sc-text">{_e(text)}</td>'
 
 
+def _evidence_cell(line: Line) -> str:
+    """The quote, with a tick or a cross above it once the evidence check has run. Nothing is added when there is no quote to check."""
+    cell = _text_cell(line.evidence, "None given")
+    if line.found is True:
+        return cell.replace('<td class="sc-text">', f'<td class="sc-text"><span class="sc-found">{FOUND_TEXT}</span>', 1)
+    if line.found is False:
+        return cell.replace('<td class="sc-text">', f'<td class="sc-text"><span class="sc-lost">{NOT_FOUND_TEXT}</span>', 1)
+    return cell
+
+
 def criteria_html(lines: tuple[Line, ...]) -> str:
     """One row per criterion: score, benchmark, gap, relative %, weight, evidence, justification."""
     head = (_th("Criterion") + _th("Score", number=True) + _th("Benchmark", BENCHMARK_HELP, True) + _th("Gap", GAP_HELP, True)
@@ -542,7 +557,7 @@ def criteria_html(lines: tuple[Line, ...]) -> str:
             f'<td class="sc-num">{_marks(line.score, line.max_score)}</td><td class="sc-num">{_plain(line.benchmark)}</td>'
             f'<td class="sc-num">{_gap(line.gap)}</td><td class="sc-num">{_percent(line.relative_pct)}</td>'
             f'<td class="sc-num">{_plain(line.weight)}</td>'
-            f'{_text_cell(line.evidence, "None given")}{_text_cell(line.justification, "None given")}</tr>')
+            f'{_evidence_cell(line)}{_text_cell(line.justification, "None given")}</tr>')
     return _table(head, "".join(body))
 
 

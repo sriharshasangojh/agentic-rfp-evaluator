@@ -43,7 +43,7 @@ from agents import evaluator, feedback, qa_agent
 from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
-from tools import industry, insights, pdf_tool, ranking, retrieval, review, reweight
+from tools import evidence_checker, industry, insights, pdf_tool, ranking, retrieval, review, reweight
 
 MAX_PROPOSALS = 10
 RECOMMENDED_MINIMUM = 4
@@ -389,6 +389,7 @@ def run_evaluation(
 
         # --- evaluate each supplier (the model judges; nothing is calculated by it)
         outcomes: dict[str, evaluator.EvaluationOutcome] = {}
+        evidence_flags: dict[str, dict[int, bool | None]] = {}
         for index, (proposal, name) in enumerate(zip(proposals, names), start=1):
             assert proposal.pdf is not None
             log(f"Evaluating {name} ({index} of {len(proposals)}) with {settings.litellm_model}...")
@@ -404,9 +405,13 @@ def run_evaluation(
             outcomes[name] = outcome
             token_counts.append(outcome.tokens)
             costs.append(outcome.cost_usd)
-            rows = [repository.AttemptRow(c.criterion_id, c.score, c.justification, c.evidence, None,
+            found = {c.criterion_id: evidence_checker.evidence_found(c.evidence, proposal.pdf.pages)
+                     for c in outcome.scorecard.criteria}                     # spec 9.2: is each quote in the proposal?
+            evidence_flags[name] = found
+            rows = [repository.AttemptRow(c.criterion_id, c.score, c.justification, c.evidence, found[c.criterion_id],
                                           outcome.raw_reply if i == 0 else None)
                     for i, c in enumerate(outcome.scorecard.criteria)]
+            missing = [c.criterion_id for c in outcome.scorecard.criteria if found[c.criterion_id] is False]
             with repository.connection() as conn:
                 repository.add_attempt(conn, run_id, name, ATTEMPT_NO, rows, _iso(now()))
                 audit.log_event(conn, run_id, "AI", "supplier_evaluated", {
@@ -416,9 +421,14 @@ def run_evaluation(
                 if outcome.warnings:
                     audit.log_event(conn, run_id, "AI", "validation_warnings",
                                     {"supplier": name, "warnings": list(outcome.warnings)})
+                if missing:
+                    audit.log_event(conn, run_id, "system", "evidence_not_found",
+                                    {"supplier": name, "criterion_ids": missing, "checked": sum(v is not None for v in found.values())})
             detail = "FAILED, all scores set to 0" if outcome.failed else ("2 tries" if outcome.attempts == 2 else "ok")
             used = "tokens not reported" if outcome.tokens is None else f"{outcome.tokens} tokens"
             log(f"Evaluated {name}: {detail}, {used}, {len(outcome.warnings)} warning(s).")
+            if missing:
+                log(f"Evidence check for {name}: {len(missing)} quote(s) not found in the proposal (flagged, scores unchanged).")
 
         # --- gates, ranking, industry score and strength labels (all plain Python)
         facts = {n: o.scorecard.extracted_facts.model_dump() for n, o in outcomes.items()}
@@ -474,7 +484,8 @@ def run_evaluation(
                         "max_score": cr.max_score, "benchmark": cr.benchmark, "gap": cr.gap, "relative_pct": cr.relative_pct,
                         "weight": cr.weight, "strength": insights.strength_label(cr.score, cr.max_score),
                         "justification": by_id[cr.criterion_id].justification, "evidence": by_id[cr.criterion_id].evidence,
-                        "evidence_found": None, "filled_by_validator": by_id[cr.criterion_id].filled_by_validator,
+                        "evidence_found": evidence_flags[r.name].get(cr.criterion_id),
+                        "filled_by_validator": by_id[cr.criterion_id].filled_by_validator,
                     } for cr in r.criteria],
                     "extracted_facts": facts[r.name],
                     "industry_breakdown": {

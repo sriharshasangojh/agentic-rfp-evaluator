@@ -184,7 +184,7 @@ def test_attempts_are_listed_by_supplier_attempt_and_criterion_with_their_time()
         attempts = repository.list_attempts(conn, result.run_id)
         assert repository.current_attempt_no(conn, result.run_id, APEX) == 1
         assert repository.current_attempt_no(conn, result.run_id, "Nobody") == 0
-    assert len(attempts) == 25 and {a.attempt_no for a in attempts} == {1} and {a.evidence_found for a in attempts} == {None}
+    assert len(attempts) == 25 and {a.attempt_no for a in attempts} == {1} and {a.evidence_found for a in attempts} == {True}
     assert [(a.supplier_name, a.criterion_id) for a in attempts] == sorted((a.supplier_name, a.criterion_id) for a in attempts)
     assert attempts[0].supplier_name == APEX and attempts[0].created_at.startswith("2026-10-23T09:30")
 

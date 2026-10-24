@@ -30,9 +30,12 @@ GOOD_FACTS = {"warranty_years": 3, "warranty_type": "on-site", "bis_named": True
 BAD_FACTS = {"warranty_years": 1, "warranty_type": "carry-in", "bis_named": None, "price_table_present": True, "delivery_weeks": 6}
 
 
+QUOTE = "We offer laptops. (Page 1)"          # a sentence that is really in `pdf_for`, so the evidence check finds it
+
+
 def reply(scores, facts=None, *, why: str = "", evidence: str = "") -> str:
     return json.dumps({"supplier_name": "Supplier A", "criteria": [
-        {"criterion_id": i, "score": s, "justification": why or f"why {i}", "evidence": evidence or f"quote {i} (Page {i})"}
+        {"criterion_id": i, "score": s, "justification": why or f"why {i}", "evidence": evidence or QUOTE}
         for i, s in enumerate(scores, start=1)], "extracted_facts": GOOD_FACTS if facts is None else facts, "risks": [],
         "overall_summary": "ok"})
 
