@@ -658,10 +658,6 @@ def _show(overview: Overview) -> None:
     else:
         _small(NO_MUSTHAVES_TEXT)
 
-    st.markdown("#### Strength by criterion")
-    st.markdown(strength_html(overview.rows, overview.criteria), unsafe_allow_html=True)
-    _small(STRENGTH_NOTE)
-
     st.markdown("#### Price against budget")
     if overview.price_chart is None:
         _small(NO_PRICE_CHART_TEXT)
@@ -670,6 +666,10 @@ def _show(overview: Overview) -> None:
         _small(PRICE_NOTE)
         if overview.price_chart.not_stated:
             _small("No total price stated, so no bar: " + ", ".join(overview.price_chart.not_stated) + ".")
+
+    st.markdown("#### Strength by criterion")
+    st.markdown(strength_html(overview.rows, overview.criteria), unsafe_allow_html=True)
+    _small(STRENGTH_NOTE)
 
     st.markdown("#### Why the top three")
     st.markdown(cards_html(overview.rows, recommended_name), unsafe_allow_html=True)

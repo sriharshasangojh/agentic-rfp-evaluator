@@ -801,9 +801,9 @@ def test_the_page_order_is_banner_budget_must_haves_strength_cards_then_details(
     page = drawn(supplier("Apex", 1, total=WITHIN, result=seeded()), supplier("Nexa", 2, result=seeded()))
     assert page.calls[0][1].startswith("<style>") and "ov-banner" in page.calls[0][1]
     assert "Budget for this run: Rs 60 lakh for 100 laptops" in page.calls[1][1]
-    assert headings(page) == ["#### Must-haves", "#### Strength by criterion", "#### Price against budget", "#### Why the top three", "#### Leaderboard"]
+    assert headings(page) == ["#### Must-haves", "#### Price against budget", "#### Strength by criterion", "#### Why the top three", "#### Leaderboard"]
     marks = [text for kind, text in page.calls if (kind == "markdown" and text.startswith("####")) or kind == "expander"]
-    assert marks == ["#### Must-haves", "#### Strength by criterion", "#### Price against budget", "#### Why the top three", tab_overview.DETAILS_LABEL, "#### Leaderboard"]
+    assert marks == ["#### Must-haves", "#### Price against budget", "#### Strength by criterion", "#### Why the top three", tab_overview.DETAILS_LABEL, "#### Leaderboard"]
 
 
 def test_the_strength_table_stays_visible_and_unchanged_outside_the_expander():
@@ -921,7 +921,7 @@ def test_the_page_draws_the_chart_after_the_strength_table_and_names_suppliers_w
     kinds = [kind for kind, _t in page.calls]
     assert kinds.count("plotly_chart") == 1 and page.figures[0][1] == {"width": "stretch"}
     texts = [t for _k, t in page.calls]
-    assert texts.index("#### Strength by criterion") < texts.index("#### Price against budget") < texts.index("<<chart>>") < texts.index("#### Why the top three")
+    assert texts.index("#### Price against budget") < texts.index("<<chart>>") < texts.index("#### Strength by criterion") < texts.index("#### Why the top three")
     assert any(tab_overview.PRICE_NOTE in t for t in texts)
     assert any("No total price stated, so no bar: Nexa." in t for t in texts)
 
