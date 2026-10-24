@@ -63,16 +63,38 @@ def test_file_name_is_safe():
     assert report.file_name("", "html") == "rfp_report_run.html"
 
 
-def test_pdf_is_made_or_fails_with_a_friendly_error():
-    page = report.report_html(EXPORT, PICKS)
-    try:
-        import pymupdf  # noqa: F401
-    except ImportError:
-        with pytest.raises(report.ReportError) as error:
-            report.report_pdf(page)
-        assert "HTML" in error.value.user_message
-    else:
-        assert report.report_pdf(page).startswith(b"%PDF")
+def _with_prices(export):
+    suppliers = [{**export["suppliers"][0], "extracted_facts": {"grand_total_rs": 5400000}},
+                 {**export["suppliers"][1], "extracted_facts": {"grand_total_rs": 6300000}}]
+    return {**export, "suppliers": suppliers}
+
+
+def test_pdf_has_pages_with_text_and_three_charts_worth_of_data():
+    from io import BytesIO
+    pypdf = pytest.importorskip("pypdf")
+    pdf = report.report_pdf(_with_prices(EXPORT), PICKS, 6000000)
+    assert pdf.startswith(b"%PDF")
+    pages = pypdf.PdfReader(BytesIO(pdf)).pages
+    assert len(pages) >= 1 and all((p.extract_text() or "").strip() for p in pages)     # no blank page
+    text = "\n".join(p.extract_text() for p in pages)
+    for heading in ("Peer score (PPI) by supplier", "Total price against the budget", "How much each area counted", "Budget 60.0 lakh"):
+        assert heading in text
+    assert "Apex <b>" in text                                                          # shown as typed, not as markup
+
+
+def test_chart_data_handles_missing_prices_and_budget():
+    data = report.chart_data(EXPORT, None)
+    assert data["prices"] == [] and data["budget"] is None and data["areas"] and data["ppi"]
+    assert report.chart_data({}, 0) == {"prices": [], "budget": None, "areas": [], "ppi": []}
+    assert "Total price against the budget" not in "".join(
+        p.extract_text() or "" for p in __import__("pypdf").PdfReader(__import__("io").BytesIO(report.report_pdf(EXPORT))).pages)
+
+
+def test_a_sparse_export_still_gives_a_pdf_and_a_problem_is_a_friendly_error():
+    assert report.report_pdf({}).startswith(b"%PDF")
+    with pytest.raises(report.ReportError) as error:
+        report.report_pdf({"suppliers": "not a list", "criteria_snapshot": 5, "totals": 3})
+    assert "web page" in error.value.user_message
 
 
 def test_picks_data_handles_none():

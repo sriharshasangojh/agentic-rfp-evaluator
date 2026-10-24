@@ -4,6 +4,7 @@ plotly==7.1.0
 pydantic==2.14.1
 pymupdf==2.0
 pypdf==6.21.2
+reportlab==5.0.1
 httpx==0.28.1
 litellm==1.106.2
 pytest==9.1.1

@@ -22,7 +22,7 @@ PDF_FAILED = "The PDF could not be made here, so the report is offered as a web 
 CLICK_ERROR = "The report could not be prepared."
 
 
-def build(run_id: str) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
+def build(run_id: str) -> tuple[dict[str, Any], dict[str, Any] | None, float | None] | None:
     """The export dict and the picks of a run, or None when the run cannot be read."""
     try:
         with repository.connection() as conn:
@@ -36,7 +36,7 @@ def build(run_id: str) -> tuple[dict[str, Any], dict[str, Any] | None] | None:
         return None
     overview = tab_overview.build_overview(run, suppliers)
     export = tab_audit.build_export(run, suppliers, overview, negotiations, feedback)
-    return export, report_tool.picks_data(orchestrator.picks_of(run_id))
+    return export, report_tool.picks_data(orchestrator.picks_of(run_id)), run.budget_rs
 
 
 def _small(st: Any, text: str) -> None:
@@ -49,10 +49,10 @@ FLOAT_CSS = (f"<style>.st-key-{FLOAT_KEY}{{position:fixed;bottom:1.25rem;right:1
              f"box-shadow:0 4px 14px rgba(0,0,0,0.25);border-radius:0.6rem;background:#FFFFFF}}</style>")
 
 
-def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] | None) -> None:
+def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] | None, budget: float | None) -> None:
     page = report_tool.report_html(export, picks)
     try:
-        data, label, mime, extension = report_tool.report_pdf(page), PDF_LABEL, "application/pdf", "pdf"
+        data, label, mime, extension = report_tool.report_pdf(export, picks, budget), PDF_LABEL, "application/pdf", "pdf"
     except report_tool.ReportError:
         data, label, mime, extension = page.encode("utf-8"), HTML_LABEL, "text/html", "html"
         _small(st, PDF_FAILED)
@@ -68,9 +68,9 @@ def floating(st: Any, run_id: str | None) -> None:
     built = build(run_id)
     if built is None or not (built[0].get("recommendation") or {}).get("recommended"):
         return
-    export, picks = built
+    export, picks, budget = built
     with st.container(key=FLOAT_KEY):
         st.markdown(FLOAT_CSS, unsafe_allow_html=True)
         with st.popover(FLOAT_LABEL, help=NOTE):
             _small(st, NOTE)
-            _offer(st, run_id, export, picks)
+            _offer(st, run_id, export, picks, budget)

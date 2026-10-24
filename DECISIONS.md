@@ -979,10 +979,10 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 ## Report (extension, after F21)
 
 - A floating "Report" button fixed at the bottom right of every tab (shown once the run on show has a recommendation; drawn in `app.py` after the tabs, not part of any tab). It opens a small panel with a PDF download and a "Write an email with the summary" link. No new tab and no new chart (still 8 tabs, 6 charts).
-- The report is built by pure functions in `tools/report.py` from the same data as the audit JSON plus the two picks (priorities and best fit). The PDF is made with PyMuPDF (already a dependency); if that fails the page offers an HTML version instead.
+- The report is built by pure functions in `tools/report.py` from the same data as the audit JSON plus the two picks (priorities and best fit). The PDF is made with ReportLab (new pinned dependency, reportlab==5.0.1) and has three charts: peer score by supplier, total price against the budget (pink when over) and a pie of the weight of each area. It was first made with PyMuPDF, which left an empty page, so it was replaced; if the PDF fails the page offers an HTML version instead.
 - Email: the link opens the person's own mail app (`mailto:`) with a subject and a short summary; they attach the PDF themselves. Sending from the app was dropped on purpose (it would need a mail server, a password or a sender domain to protect).
 - No API key and no proposal text is in the report. `rapidfuzz` is now pinned (3.14.3) in `requirements.txt`; confirm it installs on your machine.
-- The PDF layout itself is only checked on a machine with PyMuPDF (that one test is skipped in the build workspace).
+- The PDF is tested in the build workspace: every page must hold text (no blank page) and the chart headings must be present.
 
 ## F22: README and sample run
 
