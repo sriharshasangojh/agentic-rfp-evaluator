@@ -71,17 +71,20 @@ def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] |
     st.link_button(MAIL_LABEL, report_tool.mailto_link(export, picks), key=f"report_mail_{run_id}")
 
 
+EMPTY_NOTE = "Run an evaluation, or open a past run from the Audit tab, and the report appears here."
+
+
 def floating(st: Any, run_id: str | None) -> None:
-    """A button fixed at the bottom right of every tab; it opens a small panel with the PDF and the mail link.
-    Shown only when the run on show has a recommendation."""
-    if not run_id:
-        return
-    built = build(run_id)
-    if built is None or not (built[0].get("recommendation") or {}).get("recommended"):
-        return
-    export, picks, budget = built
+    """A button fixed at the bottom right of every tab; it opens a small panel with the PDF and the mail options.
+    The button is always there; with no finished run on show, the panel says what to do first."""
+    built = build(run_id) if run_id else None
+    ready = built is not None and bool((built[0].get("recommendation") or {}).get("recommended"))
     with st.container(key=FLOAT_KEY):
         st.markdown(FLOAT_CSS, unsafe_allow_html=True)
         with st.popover(FLOAT_LABEL, help=NOTE, icon=":material/description:"):
-            _small(st, NOTE)
-            _offer(st, run_id, export, picks, budget)
+            if ready:
+                export, picks, budget = built
+                _small(st, NOTE)
+                _offer(st, run_id, export, picks, budget)
+            else:
+                _small(st, EMPTY_NOTE)

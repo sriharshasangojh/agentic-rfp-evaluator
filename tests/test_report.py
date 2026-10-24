@@ -143,9 +143,11 @@ def test_section_offers_download_and_mail_link_for_a_saved_run():
     assert link[2].startswith("mailto:") and KEY not in link[2]
 
 
-def test_section_is_silent_for_an_unknown_run():
+def test_the_button_is_always_there_but_offers_nothing_without_a_finished_run():
     seed.ensure_database()
-    page = Page()
-    report_ui.floating(page, "RUN-NOPE")
-    report_ui.floating(page, None)
-    assert page.calls == []
+    for run_id in ("RUN-NOPE", None):
+        page = Page()
+        report_ui.floating(page, run_id)
+        assert ("popover", "Report") in page.calls
+        assert not [c for c in page.calls if c[0] in ("download", "link")]
+        assert any(report_ui.EMPTY_NOTE in c[1] for c in page.calls if c[0] == "markdown")
