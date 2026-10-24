@@ -82,6 +82,18 @@ def test_pdf_has_pages_with_text_and_three_charts_worth_of_data():
     assert "Apex <b>" in text                                                          # shown as typed, not as markup
 
 
+def test_email_draft_has_the_pdf_attached_and_is_unsent():
+    import email
+    from email import policy
+    pdf = report.report_pdf(EXPORT)
+    message = email.message_from_bytes(report.email_draft(EXPORT, PICKS, pdf, "RUN-1"), policy=policy.default)
+    assert message["X-Unsent"] == "1" and "RUN-1" in message["Subject"] and message["To"] is None
+    attachments = list(message.iter_attachments())
+    assert len(attachments) == 1 and attachments[0].get_filename() == "rfp_report_RUN-1.pdf"
+    assert attachments[0].get_content() == pdf
+    assert "Apex" in message.get_body(("plain",)).get_content()
+
+
 def test_chart_data_handles_missing_prices_and_budget():
     data = report.chart_data(EXPORT, None)
     assert data["prices"] == [] and data["budget"] is None and data["areas"] and data["ppi"]
@@ -123,6 +135,7 @@ def test_section_offers_download_and_mail_link_for_a_saved_run():
     page = Page()
     report_ui.floating(page, run.run_id)
     kinds = [c[0] for c in page.calls]
+    assert [c[1] for c in page.calls if c[0] == "download"].count(report_ui.DRAFT_LABEL) == 1
     assert "download" in kinds and "link" in kinds and ("popover", "Report") in page.calls
     assert ("container", report_ui.FLOAT_KEY) in page.calls
     assert any(c[0] == "markdown" and "position:fixed" in c[1] and "#FFFFFF" in c[1] and "bottom" in c[1] and "right" in c[1] for c in page.calls)

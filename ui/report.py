@@ -14,10 +14,11 @@ from db import repository
 from tools import report as report_tool
 from ui import tab_audit, tab_overview, theme
 
-NOTE = "Download this evaluation as a PDF, or open your mail app with a short summary and attach the PDF yourself. Nothing is sent from here."
+NOTE = "Download the PDF, or get an email draft with the PDF already attached: open the file and type who to send it to. Nothing is sent from here."
 PDF_LABEL = "Download PDF report"
 HTML_LABEL = "Download report (web page)"
-MAIL_LABEL = "Write an email with the summary"
+MAIL_LABEL = "Write an email with the summary (text only)"
+DRAFT_LABEL = "Email with the PDF attached"
 PDF_FAILED = "The PDF could not be made here, so the report is offered as a web page instead."
 CLICK_ERROR = "The report could not be prepared."
 
@@ -64,6 +65,9 @@ def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] |
         data, label, mime, extension = page.encode("utf-8"), HTML_LABEL, "text/html", "html"
         _small(st, PDF_FAILED)
     st.download_button(label, data=data, file_name=report_tool.file_name(run_id, extension), mime=mime, key=f"report_dl_{run_id}")
+    if extension == "pdf":
+        st.download_button(DRAFT_LABEL, data=report_tool.email_draft(export, picks, data, run_id), mime="message/rfc822",
+                           file_name=report_tool.file_name(run_id, "eml"), key=f"report_eml_{run_id}")
     st.link_button(MAIL_LABEL, report_tool.mailto_link(export, picks), key=f"report_mail_{run_id}")
 
 

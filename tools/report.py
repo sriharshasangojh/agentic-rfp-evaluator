@@ -157,6 +157,18 @@ def mailto_link(export: Mapping[str, Any], picks: Mapping[str, Any] | None = Non
     return f"mailto:?subject={quote(subject)}&body={quote(body)}"
 
 
+def email_draft(export: Mapping[str, Any], picks: Mapping[str, Any] | None, pdf: bytes, run_id: str) -> bytes:
+    """An unsent e-mail (.eml) with the subject, a short summary and the PDF already attached. Opening it in a desktop mail app
+    (Outlook, Thunderbird, Windows or Apple Mail) shows a draft: only the recipient is left to type. Nothing is sent from the app."""
+    from email.message import EmailMessage
+    message = EmailMessage()
+    message["Subject"] = SUBJECT.format(run_id=export.get("rfp_run_id"))
+    message["X-Unsent"] = "1"                       # makes Outlook open it as a new draft rather than a received message
+    message.set_content(summary_text(export, picks) + "\n\nThe full report is attached as a PDF.")
+    message.add_attachment(pdf, maintype="application", subtype="pdf", filename=file_name(run_id))
+    return message.as_bytes()
+
+
 def file_name(run_id: str, extension: str = "pdf") -> str:
     safe = "".join(ch for ch in str(run_id) if ch.isalnum() or ch in "-_") or "run"
     return f"rfp_report_{safe}.{extension}"
