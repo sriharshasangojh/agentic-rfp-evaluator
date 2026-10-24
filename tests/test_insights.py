@@ -471,7 +471,7 @@ def test_no_meter_when_the_mark_or_the_maximum_is_missing_or_not_a_usable_number
 
 def test_insights_module_stays_pure():
     """Spec 2.1 and 21: no LLM, I/O, randomness or clock in insights.py. Only these imports are allowed."""
-    allowed = {"__future__", "collections", "dataclasses", "fractions", "math", "typing"}
+    allowed = {"__future__", "collections", "dataclasses", "fractions", "math", "typing", "tools"}      # "tools": the pure ranking engine, for the what-if
     source = Path(__file__).resolve().parent.parent / "tools" / "insights.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     imported, called = set(), set()
@@ -484,4 +484,7 @@ def test_insights_module_stays_pure():
             func = node.func
             called.add(func.id if isinstance(func, ast.Name) else getattr(func, "attr", ""))
     assert imported <= allowed, f"unexpected imports in insights.py: {sorted(imported - allowed)}"
+    tools_imports = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module and n.module.split(".")[0] == "tools"}
+    tools_imports |= {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "tools" for a in n.names}
+    assert tools_imports <= {"tools", "ranking"}, "insights.py may import only the pure ranking engine from tools"
     assert not called & {"open", "print", "input", "now", "today", "utcnow", "random"}, sorted(called)

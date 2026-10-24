@@ -11,6 +11,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 
+from tools import ranking
+
 STRONG = "Strong"
 AVERAGE = "Average"
 WEAK = "Weak"
@@ -368,3 +370,64 @@ def reason_for(chosen: ProsCons, wording: object) -> str | None:
     if not isinstance(reason, str) or not reason.strip() or not isinstance(basis, list):
         return None
     return " ".join(reason.split()) if [r.key for r in chosen.pros] == basis and basis else None
+
+
+# ---------------------------------------------------------------- what-if (spec 10.3, feature F18)
+
+WHAT_IF_WEIGHTS: tuple[int, ...] = (10, 15, 20, 25, 30, 35, 40)     # the price weights tried, in percent
+
+
+@dataclass(frozen=True)
+class WhatIfLine:
+    """One supplier's Peer score (PPI) at each price weight, in the order of `WhatIf.weights`."""
+
+    name: str
+    ppis: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class LeaderChange:
+    """The leader differs between two neighbouring price weights."""
+
+    from_weight: int
+    to_weight: int
+    from_leader: str | None
+    to_leader: str | None
+
+
+@dataclass(frozen=True)
+class WhatIf:
+    weights: tuple[int, ...]
+    lines: tuple[WhatIfLine, ...]
+    leaders: tuple[str | None, ...]        # the top-ranked eligible supplier at each weight; None when nobody is eligible
+    changes: tuple[LeaderChange, ...]
+    current_weight: float                  # the price weight this run was ranked with
+
+
+def what_if(suppliers: Sequence[ranking.SupplierInput], eligible: Sequence[str], criteria: Sequence[ranking.CriterionWeight],
+            price_id: int, weights: Sequence[int] = WHAT_IF_WEIGHTS) -> WhatIf | None:
+    """Rank everyone again with the price criterion at each weight in `weights` and the other weights scaled to keep the total at 100.
+
+    The marks are the saved ones: nothing is marked again. `eligible` names the suppliers that meet every must-have; the leader is the
+    top-ranked of them (a supplier that fails a must-have is never the leader, as in the recommendation). Returns None when there is
+    no price criterion or no other weight to scale, so the question cannot be asked.
+    """
+    price = next((c for c in criteria if c.criterion_id == price_id), None)
+    others = [c for c in criteria if c.criterion_id != price_id]
+    other_total = sum((Fraction(c.weight) for c in others), Fraction(0))
+    if price is None or not suppliers or other_total <= 0:
+        return None
+    allowed = {n.lower() for n in eligible}
+    leaders: list[str | None] = []
+    ppis: dict[str, list[float]] = {s.name: [] for s in suppliers}
+    for p in weights:
+        factor = Fraction(100 - p) / other_total
+        scaled = [ranking.CriterionWeight(price.criterion_id, float(p), price.max_score)]
+        scaled += [ranking.CriterionWeight(c.criterion_id, float(Fraction(c.weight) * factor), c.max_score) for c in others]
+        ranked = ranking.rank_suppliers(suppliers, scaled).suppliers
+        for r in ranked:
+            ppis[r.name].append(r.ppi)
+        leaders.append(next((r.name for r in ranked if r.name.lower() in allowed), None))
+    changes = tuple(LeaderChange(weights[i], weights[i + 1], leaders[i], leaders[i + 1])
+                    for i in range(len(weights) - 1) if leaders[i] != leaders[i + 1])
+    return WhatIf(tuple(weights), tuple(WhatIfLine(s.name, tuple(ppis[s.name])) for s in suppliers), tuple(leaders), changes, price.weight)
