@@ -7,7 +7,7 @@ import re
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -524,3 +524,37 @@ def add_to_run_totals(conn: sqlite3.Connection, run_id: str, tokens: int | None,
         "WHERE rfp_run_id = ?",
         (tokens, tokens, cost_usd, cost_usd, run_id),
     )
+
+
+# ---------------------------------------------------------------- negotiation suggestions (F20)
+
+@dataclass(frozen=True)
+class NegotiationRecord:
+    id: int
+    supplier_name: str
+    points: list[dict[str, Any]]      # {"key", "topic", "text", "plain", "worded"} in the order shown
+    created_at: str
+    fit: dict[str, Any] = field(default_factory=dict)      # {"text", "plain", "worded", "priorities"}: why this supplier fits what was asked
+
+
+def add_negotiation(conn: sqlite3.Connection, run_id: str, supplier_name: str, points: list[dict[str, Any]], created_at: str,
+                    fit: dict[str, Any] | None = None) -> int:
+    cursor = conn.execute(
+        "INSERT INTO negotiation_points (rfp_run_id, supplier_name, points_json, created_at) VALUES (?, ?, ?, ?)",
+        (run_id, supplier_name, json.dumps({"fit": fit or {}, "points": points}, ensure_ascii=False), created_at))
+    return int(cursor.lastrowid)
+
+
+def list_negotiations(conn: sqlite3.Connection, run_id: str) -> list[NegotiationRecord]:
+    """Every set of negotiation points made for a run, oldest first."""
+    found: list[NegotiationRecord] = []
+    for row in conn.execute("SELECT id, supplier_name, points_json, created_at FROM negotiation_points WHERE rfp_run_id = ? ORDER BY id", (run_id,)):
+        try:
+            loaded = json.loads(row["points_json"])
+        except (TypeError, ValueError):
+            loaded = {}
+        fit = loaded.get("fit") if isinstance(loaded, dict) and isinstance(loaded.get("fit"), dict) else {}
+        listed = loaded.get("points") if isinstance(loaded, dict) else loaded
+        points = [p for p in listed if isinstance(p, dict)] if isinstance(listed, list) else []
+        found.append(NegotiationRecord(row["id"], row["supplier_name"], points, row["created_at"], fit))
+    return found

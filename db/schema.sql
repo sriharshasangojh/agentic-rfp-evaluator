@@ -159,3 +159,25 @@ BEFORE DELETE ON reviewer_feedback
 BEGIN
     SELECT RAISE(ABORT, 'reviewer_feedback is append-only');
 END;
+
+-- Negotiation suggestions (F20): every time points are made for a supplier, they are added here and never changed.
+CREATE TABLE IF NOT EXISTS negotiation_points (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    rfp_run_id    TEXT NOT NULL REFERENCES rfp_runs (rfp_run_id),
+    supplier_name TEXT NOT NULL,
+    points_json   TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_negotiation_run ON negotiation_points (rfp_run_id);
+
+CREATE TRIGGER IF NOT EXISTS negotiation_no_update
+BEFORE UPDATE ON negotiation_points
+BEGIN
+    SELECT RAISE(ABORT, 'negotiation_points is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS negotiation_no_delete
+BEFORE DELETE ON negotiation_points
+BEGIN
+    SELECT RAISE(ABORT, 'negotiation_points is append-only');
+END;

@@ -35,7 +35,7 @@ import streamlit as st
 
 from agents import orchestrator
 from db import repository
-from tools import review, reweight
+from tools import insights, review, reweight
 from ui import sidebar, tab_audit, tab_overview, theme
 from ui.tab_new_evaluation import SHOWN_RUN_KEY
 
@@ -75,6 +75,20 @@ ROUNDS_TEXT = "Round {number} of {total}"
 TODO_LABELS = {review.KIND_FAILED: "Evaluation failed", review.KIND_GATE: "Not eligible", review.KIND_EVIDENCE: "Evidence not found"}
 TODO_TONES = {review.KIND_FAILED: tab_overview.BAD, review.KIND_GATE: tab_overview.BAD, review.KIND_EVIDENCE: tab_overview.WARN}
 
+NEGOTIATION_TITLE = "Final recommendation and negotiation"
+NEGOTIATION_INTRO = ("You used all the rounds, so here is one final recommendation, the best fit for what you asked for, and what to ask "
+                     "that supplier for before you sign. These are suggestions only: they never change a score or a rank, and they never "
+                     "mention another supplier or its price.")
+NEGOTIATION_DONE = "Done. Your final recommendation and the negotiation points are just below."
+NEGOTIATION_NONE = "No supplier meets every must-have, so there is no supplier to recommend or to negotiate with."
+FIT_HEAD = "Best fit for what you asked for: {supplier}"
+NEGOTIATION_LOCKED = orchestrator.NEGOTIATION_LOCKED_TEXT
+NEGOTIATION_BUTTON = "Make the final recommendation and negotiation points"
+NEGOTIATION_TOPICS = {insights.TOPIC_GATE: ("Must-have", tab_overview.BAD), insights.TOPIC_BUDGET: ("Budget", tab_overview.BAD),
+                      insights.TOPIC_CRITERION: ("Gap", tab_overview.WARN), insights.TOPIC_RISK: ("Risk", tab_overview.WARN),
+                      insights.TOPIC_EVIDENCE: ("Proof", tab_overview.WARN), insights.TOPIC_STARTUP: ("Startup", tab_overview.GOOD)}
+NEGOTIATION_PLAIN_TEXT = "Plain wording. Choose a provider, validate your key and pick a model in the sidebar to have the AI word them."
+NEGOTIATION_AI_TEXT = "Worded by the AI from the points Python chose. Lines that did not pass the checks show the plain wording."
 MUTED = tab_overview.MUTED
 _CSS = (
     ".rv-list{list-style:none;margin:0.25rem 0 0.5rem 0;padding:0}"
@@ -369,6 +383,15 @@ def recommendation_html(recommended: str | None, board: Sequence[RankLine]) -> s
     return f'<style>{_CSS}</style><div class="rv-panel"><div class="rv-panel-head">We recommend {_e(recommended)}</div>{score}</div>'
 
 
+def negotiation_html(record: repository.NegotiationRecord) -> str:
+    """The saved points of one set, numbered, each with a small label for what it is about."""
+    rows = []
+    for point in record.points[:insights.NEGOTIATION_MAX]:
+        label, tone = NEGOTIATION_TOPICS.get(str(point.get("topic")), ("Point", tab_overview.WARN))
+        rows.append(f'<li>{_chip(label, tone)}{_e(point.get("text", ""))}</li>')
+    return f'<style>{_CSS}</style><ol class="rv-list" style="list-style:decimal;padding-left:1.2rem">{"".join(rows)}</ol>'
+
+
 def history_html(view: ReviewView) -> str:
     """Every round in one line each, then the acceptance, if there was one."""
     items = []
@@ -401,6 +424,10 @@ def _queue(kind: str, run_id: str, round_no: int) -> None:
         "kind": kind, "run_id": run_id, "round_no": round_no, "score": state.get(keys["score"]), "why": state.get(keys["why"]),
         "text": str(state.get(keys["text"]) or ""), "pick": state.get(keys["pick"]), "proposal": state.get(PROPOSAL_KEY),
         "keys": list(keys.values())}
+
+
+def _queue_negotiation(run_id: str, supplier: str) -> None:
+    st.session_state[PENDING_KEY] = {"kind": "negotiate", "run_id": run_id, "round_no": 0, "score": None, "supplier": supplier, "keys": []}
 
 
 def _actor() -> str:
@@ -442,6 +469,12 @@ def _carry_out(pending: dict[str, Any], run_id: str) -> tuple[orchestrator.Revie
     elif kind == "understand":
         outcome = _understand(pending, run_id)
         return outcome, False
+    elif kind == "negotiate":
+        supplier = str(pending.get("supplier") or "")
+        with st.spinner("Making the final recommendation and the negotiation points..."):
+            outcome = orchestrator.suggest_negotiation(run_id, supplier, sidebar.get_llm_settings(), actor)
+        done = f"{NEGOTIATION_DONE} {outcome.message}".strip() if outcome.ok else outcome.message
+        return orchestrator.ReviewOutcome(outcome.ok, done), False
     elif kind == "discard":
         st.session_state.pop(PROPOSAL_KEY, None)
         return orchestrator.ReviewOutcome(True, ""), False
@@ -572,12 +605,42 @@ def _details(view: ReviewView) -> None:
             st.markdown(history_html(view), unsafe_allow_html=True)
 
 
-def _show(run_id: str, view: ReviewView) -> None:
+def fit_html(record: repository.NegotiationRecord) -> str:
+    """The panel that says which supplier is the final pick and why it fits what the person asked for."""
+    text = _e(record.fit.get("text", "")) if record.fit else ""
+    body = f'<div class="rv-why">{text}</div>' if text else ""
+    return (f'<style>{_CSS}</style><div class="rv-panel"><div class="rv-panel-head">{_e(FIT_HEAD.format(supplier=record.supplier_name))}'
+            f'</div>{body}</div>')
+
+
+def _negotiation(run_id: str, view: ReviewView, records: Sequence[repository.NegotiationRecord]) -> None:
+    """After every round: the final recommendation (Python's pick), why it fits, and the points to negotiate."""
+    if not view.board:
+        return
+    st.markdown(f"#### {NEGOTIATION_TITLE}")
+    if view.rounds_left > 0:
+        _small(NEGOTIATION_LOCKED)
+        return
+    if view.recommended is None:
+        _small(NEGOTIATION_NONE)
+        return
+    _small(NEGOTIATION_INTRO)
+    newest = next((r for r in reversed(records) if r.supplier_name == view.recommended and r.points), None)
+    if newest is not None:
+        st.markdown(fit_html(newest), unsafe_allow_html=True)
+        st.markdown(negotiation_html(newest), unsafe_allow_html=True)
+        _small(NEGOTIATION_AI_TEXT if (any(p.get("worded") for p in newest.points) or newest.fit.get("worded")) else NEGOTIATION_PLAIN_TEXT)
+    st.button(NEGOTIATION_BUTTON, key=f"rv_neg_{run_id}", on_click=_queue_negotiation, args=(run_id, view.recommended))
+
+
+def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.NegotiationRecord] = ()) -> None:
     _small(view.run_line)
     st.markdown(INTRO_TEXT)
     message = st.session_state.pop(MESSAGE_KEY, None)
     if isinstance(message, tuple) and len(message) == 2 and message[1] and not message[0]:
         st.error(str(message[1]))                      # only a refusal is announced; a success is not said twice: the page itself shows it
+    elif isinstance(message, tuple) and len(message) == 2 and message[0] and str(message[1]).startswith(NEGOTIATION_DONE):
+        st.success(str(message[1]))                    # the one success that is said: the new points are further down the page
 
     st.markdown("#### Where things stand")
     if view.recommended:
@@ -585,6 +648,9 @@ def _show(run_id: str, view: ReviewView) -> None:
     if view.rounds:
         st.markdown("#### What changed last")
         st.markdown(round_summary_html(view.rounds[-1]), unsafe_allow_html=True)
+
+    if view.rounds_left == 0:                          # every round used: the final recommendation is what is left to do, so it comes first
+        _negotiation(run_id, view, negotiations)
 
     if view.accepted is not None and view.status == repository.RUN_FINAL:
         st.success(FINAL_TEXT.format(supplier=view.accepted.supplier, when=view.accepted.when))
@@ -595,6 +661,8 @@ def _show(run_id: str, view: ReviewView) -> None:
     else:
         _question(run_id, view)
 
+    if view.rounds_left > 0:
+        _negotiation(run_id, view, negotiations)
     _details(view)
 
 
@@ -609,10 +677,11 @@ def render() -> None:
             run = repository.get_run(conn, run_id)
             suppliers = repository.list_supplier_results(conn, run_id) if run is not None else []
             feedback = repository.list_feedback(conn, run_id) if run is not None else []
+            negotiations = repository.list_negotiations(conn, run_id) if run is not None else []
     except (sqlite3.Error, OSError):
         st.error(DATABASE_ERROR_TEXT)
         return
     if run is None or not suppliers:
         st.info(NOT_FOUND_TEXT)
         return
-    _show(run_id, build_review(run, suppliers, feedback))
+    _show(run_id, build_review(run, suppliers, feedback), negotiations)

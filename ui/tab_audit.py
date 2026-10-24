@@ -11,7 +11,7 @@ secret is dropped and a number that is not finite becomes null. The file never h
 proposal. Clicking the button adds a "json_exported" row to the audit trail (spec section 14).
 
 Not on this tab yet: the three AI-quality tiles, the run history, the change trail and the PDF fingerprints (feature F21).
-The feedback rounds and the negotiation points of the file are empty lists until features F19 and F20 save them.
+The feedback rounds of the file are an empty list; the negotiation points are the newest set made for each supplier (F20).
 
 The page is small pieces of HTML (as on the Overview and Scorecards tabs) because Streamlit's own widgets cannot lay out
 the tiles. Every piece of text that comes from a proposal, a model or the buyer goes through `html.escape`.
@@ -23,6 +23,7 @@ import json
 import math
 import re
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -161,8 +162,17 @@ def _supplier_export(stored: repository.StoredSupplier, row: tab_overview.Row | 
     return {key: values[key] for key in SUPPLIER_KEYS}
 
 
+def negotiation_export(negotiations: Sequence[repository.NegotiationRecord]) -> list[dict[str, Any]]:
+    """The newest set of negotiation points of each supplier: {"supplier", "created_at", "fit", "points": [text, ...]}."""
+    newest: dict[str, repository.NegotiationRecord] = {}
+    for record in negotiations:
+        newest[record.supplier_name] = record
+    return [{"supplier": r.supplier_name, "created_at": r.created_at, "fit": _clean(str(r.fit.get("text", ""))) if r.fit else "", "points": [_clean(str(p.get("text", ""))) for p in r.points]}
+            for r in newest.values()]
+
+
 def build_export(run: repository.RunRecord, suppliers: list[repository.StoredSupplier],
-                 overview: tab_overview.Overview) -> dict[str, Any]:
+                 overview: tab_overview.Overview, negotiations: Sequence[repository.NegotiationRecord] = ()) -> dict[str, Any]:
     """The whole file as plain Python data, in the order and with the keys of spec section 15. No Streamlit here."""
     rows = {row.name: row for row in overview.rows}
     values: dict[str, Any] = {
@@ -184,7 +194,7 @@ def build_export(run: repository.RunRecord, suppliers: list[repository.StoredSup
         },
         "tie_break_explanations": [row.tie_break for row in overview.rows if row.tie_break],
         "feedback_rounds": [],          # saved by the "Not happy?" flow (feature F19)
-        "negotiation_points": [],       # saved with the negotiation suggestions (feature F20)
+        "negotiation_points": negotiation_export(negotiations),     # the newest set for each supplier (feature F20)
         "totals": {"tokens": run.total_tokens, "cost_usd": _clean(run.total_cost_usd),
                    "duration_seconds": _clean(run.duration_seconds)},
     }
@@ -406,6 +416,7 @@ def render() -> None:
             run = repository.get_run(conn, run_id)
             suppliers = repository.list_supplier_results(conn, run_id) if run is not None else []
             template = repository.get_template(conn, run.template_id) if run is not None else None
+            negotiations = repository.list_negotiations(conn, run_id) if run is not None else []
     except (sqlite3.Error, OSError):
         st.error(DATABASE_ERROR_TEXT)
         return
@@ -414,4 +425,4 @@ def render() -> None:
         return
     overview = tab_overview.build_overview(run, suppliers)
     _show_page(build_details(run, suppliers, overview, template.name if template else None),
-               build_export(run, suppliers, overview), run_id)
+               build_export(run, suppliers, overview, negotiations), run_id)

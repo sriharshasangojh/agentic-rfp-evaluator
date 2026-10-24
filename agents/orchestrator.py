@@ -38,7 +38,7 @@ from datetime import date, datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from agents import evaluator, feedback, qa_agent, summarizer
+from agents import evaluator, feedback, negotiator, qa_agent, summarizer
 from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
@@ -1132,3 +1132,141 @@ def _log_question_failure(run_id: str, base: dict[str, Any], kind: str, settings
             audit.log_event(conn, run_id, "AI", "question_failed", {**base, "kind": kind, "model": settings.model, "provider": settings.provider})
     except (sqlite3.Error, OSError):
         pass
+
+
+# ---------------------------------------------------------------- negotiation suggestions (F20, spec 10.4)
+
+NEGOTIATION_LOCKED_TEXT = (f"Negotiation points are made once all {reweight.MAX_ROUNDS} rounds of changing your priorities are used "
+                           "and you are still not satisfied.")
+
+
+@dataclass(frozen=True)
+class NegotiationLine:
+    key: str
+    topic: str
+    text: str            # what is shown: the AI's wording when it passed the checks, otherwise the plain text
+    plain: str           # the plain text Python chose
+    worded: bool         # True when `text` is the AI's wording
+
+
+@dataclass(frozen=True)
+class FitNote:
+    """Why the final supplier suits what the person asked for in the rounds. `text` is the AI's wording when it passed the checks."""
+
+    text: str
+    plain: str
+    worded: bool
+    priorities: tuple[str, ...]      # what the person asked to count for more, in the order of the rounds, without repeats
+
+
+@dataclass(frozen=True)
+class NegotiationOutcome:
+    ok: bool
+    message: str = ""
+    supplier: str = ""
+    lines: tuple[NegotiationLine, ...] = ()
+    used_ai: bool = False
+    fit: FitNote | None = None
+
+
+def _asked_for(feedback: Sequence[repository.FeedbackRow]) -> tuple[str, ...]:
+    """The criteria the person asked to count for more, one per round, in order, each named once."""
+    names: list[str] = []
+    for row in feedback:
+        if row.action == repository.ACTION_REWEIGHT:
+            name = str(row.details.get("criterion") or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return tuple(names)
+
+
+def _list_of(names: Sequence[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def fit_plain(supplier: str, priorities: Sequence[str], ppi: object) -> str:
+    """The plain fit note, written by Python from the person's own choices."""
+    asked = f"You asked for more weight on {_list_of(priorities)}. " if priorities else ""
+    score = f" with a score of {ppi:.2f} against the other bids" if isinstance(ppi, (int, float)) and not isinstance(ppi, bool) else ""
+    return f"{asked}{supplier} ranks first among the suppliers that meet every must-have{score}, so it is the best fit for what you asked for."
+
+
+def _negotiation_inputs(run: repository.RunRecord, result: dict[str, Any]) -> tuple[tuple[insights.NegotiationPoint, ...], int]:
+    gates = [insights.GateOutcome(str(g.get("gate_id", "")), str(g.get("name", "")), bool(g.get("passed")), str(g.get("reason", "")))
+             for g in result.get("gate_details", []) if isinstance(g, dict)]
+    rows, details = [], {}
+    for c in result.get("criteria", []):
+        if not isinstance(c, dict):
+            continue
+        rows.append(insights.CriterionResult(
+            int(c["criterion_id"]), str(c["name"]), float(c["score"]), float(c["max_score"]), float(c["weight"]),
+            c.get("benchmark"), c.get("gap"), c.get("relative_pct"), bool(c.get("filled_by_validator")), c.get("evidence_found")))
+        said = " ".join(f"{c.get('justification', '')} {('Evidence: ' + str(c['evidence'])) if c.get('evidence') else ''}".split())
+        if said:
+            details[int(c["criterion_id"])] = said
+    facts = result.get("extracted_facts") if isinstance(result.get("extracted_facts"), dict) else {}
+    risks = [str(r) for r in result.get("risks", []) if isinstance(r, str)]
+    points = insights.negotiation_points(gates, facts.get("grand_total_rs"), run.budget_rs, rows, risks, details=details)
+    return points, len(rows)
+
+
+def suggest_negotiation(
+    run_id: str, supplier: str, settings: client.LLMSettings | None = None, actor: str = REVIEWER,
+    *, backend: client.Backend | None = None, sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> NegotiationOutcome:
+    """The final recommendation and negotiation points (spec 10.4 and 11.2), only once all rounds of changing the priorities were used,
+    and only for the supplier Python recommends (the best-ranked one that meets every must-have, with the weights of the person's
+    rounds). Python chooses the supplier and at most five points; the AI, when `settings` is given, only words them and a short note on
+    why the supplier fits what the person asked for. A problem with the AI never stops this: the plain text is used. The points are saved with the run and the audit log. Nothing
+    here changes a score or a rank, and no other supplier's name or price is sent to the AI."""
+    who = actor or REVIEWER
+    try:
+        with repository.connection() as conn:
+            run = repository.get_run(conn, run_id)
+            stored = {s.supplier_name: s for s in repository.list_supplier_results(conn, run_id)} if run is not None else {}
+            feedback = repository.list_feedback(conn, run_id) if run is not None else []
+        if run is None or supplier not in stored:
+            return NegotiationOutcome(False, "That supplier was not found in this run.", supplier)
+        if reweight.rounds_left(feedback) > 0:         # the person's own rule: only after every round was used (spec 11.2)
+            return NegotiationOutcome(False, NEGOTIATION_LOCKED_TEXT, supplier)
+        final = review.recommended_of(_board(stored))  # Python chooses: the best-ranked supplier that meets every must-have
+        if final is None:
+            return NegotiationOutcome(False, "No supplier meets every must-have, so there is no supplier to recommend or to negotiate with.", supplier)
+        if supplier != final:
+            return NegotiationOutcome(False, f"Negotiation points are made for the final recommendation, {final}.", supplier)
+        result = stored[supplier].result
+        if result.get("evaluation_failed"):
+            return NegotiationOutcome(False, f"{supplier}'s evaluation failed, so there is nothing to base negotiation points on.", supplier)
+        points, _count = _negotiation_inputs(run, result)
+        if not points:
+            return NegotiationOutcome(False, f"No negotiation points came up for {supplier}: every requirement is met and no criterion is behind.", supplier)
+        asked = _asked_for(feedback)
+        plain_fit = fit_plain(supplier, asked, stored[supplier].ppi)
+        worded, ai_fit, tokens, cost, note = {}, None, None, None, None
+        if settings is not None:
+            others = [n for n in stored if n != supplier]
+            try:
+                reply = negotiator.word_points(points, others, settings, backend=backend, sleep=sleep, priorities=asked,
+                                               strengths=[str(t) for t in result.get("pros", []) if isinstance(t, str)][:3])
+                worded, ai_fit, tokens, cost = reply.lines, reply.fit, reply.tokens, reply.cost_usd
+            except client.LLMError as exc:
+                note = f"The AI could not be reached ({exc.user_message}), so the plain wording is shown."
+            except negotiator.NegotiatorError as exc:
+                tokens, cost, note = exc.tokens, exc.cost_usd, "The AI's wording could not be used, so the plain wording is shown."
+        lines = tuple(NegotiationLine(p.key, p.topic, worded.get(p.key, p.text), p.text, p.key in worded) for p in points)
+        fit = FitNote(ai_fit or plain_fit, plain_fit, ai_fit is not None, asked)
+        saved = [{"key": ln.key, "topic": ln.topic, "text": ln.text, "plain": ln.plain, "worded": ln.worded} for ln in lines]
+        with repository.connection() as conn:
+            repository.add_negotiation(conn, run_id, supplier, saved, _iso(now()),
+                                       {"text": fit.text, "plain": fit.plain, "worded": fit.worded, "priorities": list(asked)})
+            if settings is not None:
+                repository.add_to_run_totals(conn, run_id, tokens, cost)
+            audit.log_event(conn, run_id, who, "negotiation_suggested", {
+                "supplier": supplier, "points": [ln.key for ln in lines], "worded": sum(ln.worded for ln in lines),
+                "priorities": list(asked), "fit_worded": fit.worded,
+                "asked_ai": settings is not None, "problem": note, "model": settings.model if settings else None,
+                "tokens": tokens, "cost_usd": cost})
+        return NegotiationOutcome(True, note or "", supplier, lines, settings is not None and note is None, fit)
+    except (sqlite3.Error, OSError, KeyError, TypeError, ValueError):
+        return NegotiationOutcome(False, "The negotiation points could not be made because the saved results could not be read or the database was busy. Try again in a few seconds.", supplier)

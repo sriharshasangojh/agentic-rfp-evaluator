@@ -529,6 +529,13 @@ def draw(page: _Page) -> _Page:
     page.calls, page.visible, page.drop_downs, page.open_block = [], [], [], None
     page.buttons, page.selectboxes, page.radios = {}, [], []
     T.render()
+    # the negotiation section (F20) has its own tests (test_negotiation.py); here it is taken out of what the page shows
+    page.negotiation_buttons = {k: v for k, v in page.buttons.items() if v["label"] == T.NEGOTIATION_BUTTON}
+    for key in page.negotiation_buttons:
+        del page.buttons[key]
+    ours = (f"#### {T.NEGOTIATION_TITLE}", T.NEGOTIATION_BUTTON)
+    for group in (page.calls, page.visible):
+        group[:] = [c for c in group if c[1] not in ours and T.NEGOTIATION_INTRO not in c[1] and T.NEGOTIATION_LOCKED not in c[1]]
     return page
 
 
@@ -1071,6 +1078,11 @@ def review_tab(app):
     return app.tabs[5]
 
 
+def question_buttons(tab) -> list:
+    """The buttons of the question, without the negotiation button (F20; it has its own tests)."""
+    return [b for b in tab.button if b.label != T.NEGOTIATION_BUTTON]
+
+
 def shown(block) -> str:
     return "\n".join(str(item.value) for kind in ("markdown", "caption", "info", "error", "warning", "success") for item in getattr(block, kind))
 
@@ -1099,7 +1111,7 @@ def test_a_saved_run_opens_with_the_recommendation_and_the_question():
     for expected in ("Not eligible", "Where things stand", "More detail", "Your answer", "We recommend Apex Systems"):
         assert expected in text, expected
     assert [e.label for e in tab.expander] == ["To do (2)", "Full ranking (5 suppliers)", "What counts for how much"]
-    assert len(tab.radio) == 1 and tab.radio[0].label == T.QUESTION_TEXT and not tab.button
+    assert len(tab.radio) == 1 and tab.radio[0].label == T.QUESTION_TEXT and not question_buttons(tab)
     assert len(app.tabs) == 8 and "Your answer" not in shown(app.tabs[2])
 
 
@@ -1108,8 +1120,8 @@ def test_choosing_a_score_of_5_and_accepting_makes_the_run_final():
     run_id = evaluated_run().run_id
     app = open_run(run_id)
     review_tab(app).radio[0].set_value(5).run()
-    assert not app.exception and [b.label for b in review_tab(app).button] == [f"Accept {APEX}"]
-    review_tab(app).button[0].click().run()
+    assert not app.exception and [b.label for b in question_buttons(review_tab(app))] == [f"Accept {APEX}"]
+    question_buttons(review_tab(app))[0].click().run()
     assert not app.exception and "This evaluation is final." in shown(review_tab(app))
     assert rows("SELECT status FROM rfp_runs") == [{"status": "Final"}]
 
@@ -1123,8 +1135,8 @@ def test_a_low_score_and_an_option_rank_the_suppliers_again():
     app.session_state[keys["score"]] = 2
     app.session_state[keys["why"]] = PRICE
     app.run()
-    assert not app.exception and [b.label for b in review_tab(app).button] == [RANK_AGAIN]
-    review_tab(app).button[0].click().run()
+    assert not app.exception and [b.label for b in question_buttons(review_tab(app))] == [RANK_AGAIN]
+    question_buttons(review_tab(app))[0].click().run()
     assert not app.exception
     text = shown(review_tab(app))
     assert "Commercial Value now counts for 30% of the decision (it was 20%)." in text and "We recommend NexaWorks" in text

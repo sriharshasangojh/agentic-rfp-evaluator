@@ -480,3 +480,89 @@ def price_reason(total_rs: float, reference_rs: float, mark: float, max_score: f
                 f"({format_lakh(total_rs)}), so it gets the full {top} marks.")
     return (f"Price mark worked out from the totals, not marked by the AI: the lowest total in this batch is {format_lakh(reference_rs)} "
             f"and this total is {format_lakh(total_rs)}, so {top} x {_lakh_number(reference_rs)} / {_lakh_number(total_rs)} = {mark:g}.")
+
+
+# ---------------------------------------------------------------- negotiation selection (spec 10.4)
+
+NEGOTIATION_MAX = 5
+GAP_FROM = 2                                  # a criterion this many points behind the best offer in the batch is worth raising
+TOPIC_GATE, TOPIC_BUDGET, TOPIC_CRITERION, TOPIC_RISK, TOPIC_EVIDENCE, TOPIC_STARTUP = (
+    "gate", "budget", "criterion", "risk", "evidence", "startup")
+
+GATE_ASKS = {
+    "warranty": "Ask the supplier to extend the warranty to at least 3 years.",
+    "certification": "Ask for the BIS certificate before signing.",
+    "delivery": "Ask for delivery within 8 weeks, with a penalty clause for late delivery.",
+}
+CRITERION_LEVERS = {
+    "technical capability": "Ask for a better configuration at the same price, for example 32 GB RAM or a larger SSD.",
+    "implementation plan": "Ask for a named project manager, a 5-unit pilot, and milestone dates with penalties.",
+    "commercial value": "Ask for a discount, free imaging and setup, and 10% of the payment held until acceptance.",
+    "security & compliance": "Ask for a data-wipe certificate per device, encryption before delivery, and audit logs.",
+    "support & experience": "Ask for on-site warranty, a response-time commitment, and spare replacement units.",
+}
+STARTUP_LEVERS = (
+    "Ask for a 12-month price lock for follow-on orders.",
+    "Ask whether payment in instalments or leasing is possible.",
+    "Ask for free bags and chargers.",
+    "Ask for delivery to remote hires.",
+)
+RISK_CHARS_MAX = 160
+
+
+@dataclass(frozen=True)
+class NegotiationPoint:
+    key: str                 # "gate:warranty", "budget", "criterion:3", "risk:1", "evidence:3", "startup:1"
+    topic: str               # TOPIC_*
+    text: str                # the plain wording (always shown when the AI is not used or its line is rejected)
+    detail: str = ""         # the supplier's own words behind it, for the AI (never another supplier's)
+
+
+def _flat_text(text: object) -> str:
+    return " ".join(str(text or "").split())
+
+
+def negotiation_points(
+    gates: Sequence[GateOutcome],
+    grand_total_rs: object,
+    budget_rs: object,
+    criteria: Sequence[CriterionResult],
+    risks: Sequence[str],
+    *,
+    details: Mapping[int, str] | None = None,
+) -> tuple[NegotiationPoint, ...]:
+    """At most five points for ONE supplier, in the order of the spec: unmet requirements, the budget, criterion gaps (by
+    weight x gap), the AI's risks, evidence not found, then the startup levers while there is room. Nothing here uses another
+    supplier's name or price. A criterion's gap is measured against the batch best, but only the size of the gap is used."""
+    found: list[NegotiationPoint] = []
+    for gate in gates:
+        if not gate.passed:
+            found.append(NegotiationPoint(f"gate:{gate.gate_id}", TOPIC_GATE, GATE_ASKS.get(
+                gate.gate_id, f"Ask the supplier to resolve this before signing: {gate.name}."), _flat_text(gate.reason)))
+    price = price_facts({"grand_total_rs": grand_total_rs}, budget_rs)
+    if price.within_budget is False and price.over_by_rs is not None and price.budget_rs is not None:
+        found.append(NegotiationPoint(
+            "budget", TOPIC_BUDGET,
+            f"The total is {format_lakh(price.total_rs)}, {format_lakh(price.over_by_rs)} over our {format_lakh(price.budget_rs)} budget. "
+            "Ask for a reduction to within budget, a volume discount, or bundled services.",
+            f"total {format_lakh(price.total_rs)}; budget {format_lakh(price.budget_rs)}; over by {format_lakh(price.over_by_rs)}"))
+    behind = []
+    for order, c in enumerate(criteria):
+        label = strength_label(c.score, c.max_score)
+        gap = c.gap if c.gap is not None else 0
+        if (-gap >= GAP_FROM or label in (WEAK, AVERAGE)) and not c.filled_by_validator:
+            behind.append((float(_exact(c.weight) * abs(_exact(gap))), float(_exact(c.weight) * (_exact(c.max_score) - _exact(c.score))), -order, c))
+    for _w, _s, _o, c in sorted(behind, key=lambda t: (t[0], t[1], t[2]), reverse=True):
+        lever = CRITERION_LEVERS.get(c.name.strip().casefold(), f"Ask what the supplier can improve on {c.name}.")
+        note = "" if is_price_criterion(c.name) else _flat_text((details or {}).get(c.criterion_id))
+        found.append(NegotiationPoint(f"criterion:{c.criterion_id}", TOPIC_CRITERION, f"On {c.name}: {lever[0].lower()}{lever[1:]}", note))
+    for number, risk in enumerate((r for r in risks if _flat_text(r)), start=1):
+        said = _flat_text(risk)[:RISK_CHARS_MAX]
+        found.append(NegotiationPoint(f"risk:{number}", TOPIC_RISK, f"Add a contract clause that covers this risk: {said}", said))
+    for c in criteria:
+        if c.evidence_found is False:
+            found.append(NegotiationPoint(f"evidence:{c.criterion_id}", TOPIC_EVIDENCE,
+                                          f"On {c.name}: ask for written proof of the claim, or make it a contract commitment.", ""))
+    for number, lever in enumerate(STARTUP_LEVERS, start=1):
+        found.append(NegotiationPoint(f"startup:{number}", TOPIC_STARTUP, lever, ""))
+    return tuple(found[:NEGOTIATION_MAX])
