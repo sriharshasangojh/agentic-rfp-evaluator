@@ -6,6 +6,8 @@ under one run id, so nothing is lost if a run stops half way.
 
 Steps run here (spec 8): input checks, create the run, read the documents, evaluate each supplier, gates, rank,
 industry score, strength labels, save. Not here yet: the evidence check (F15) and the pros/cons wording (F16).
+The last part of the file answers questions about the proposals (F14, spec 12): a keyword search picks the best excerpts and the AI
+answers from them only. Scoring never uses that search.
 
 The second half of the file is the human review (F13, spec section 11): the person says how satisfied they are with the
 recommendation (1 to 5). Satisfied: accept it. Not satisfied: they say what they are not satisfied with, the matching criterion
@@ -37,11 +39,11 @@ from datetime import date, datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from agents import evaluator, feedback
+from agents import evaluator, feedback, qa_agent
 from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
-from tools import industry, insights, pdf_tool, ranking, review, reweight
+from tools import industry, insights, pdf_tool, ranking, retrieval, review, reweight
 
 MAX_PROPOSALS = 10
 RECOMMENDED_MINIMUM = 4
@@ -973,3 +975,109 @@ def accept_recommendation(
         return ReviewOutcome(True, f"You accepted {chosen}. This evaluation is now final.")
     except (review.ReviewError, sqlite3.Error, OSError) as error:
         return _failed_outcome(error)
+
+
+# ---------------------------------------------------------------- asking about the proposals (F14, spec 12)
+
+NO_TEXT_TEXT = ("The proposal text is not available here any more: it is kept in this browser session only and never saved. "
+                "Upload the PDFs again on New evaluation and evaluate them to ask questions about them.")
+KEY_IN_QUESTION_TEXT = "What you wrote contains your API key. Remove it and try again. Nothing was sent."
+DATABASE_BUSY_ASK_TEXT = "The question could not be answered because the database was busy or unavailable. Wait a few seconds and try again."
+
+
+@dataclass(frozen=True)
+class AskOutcome:
+    """The result of one question. `ok` with an `answer` means there is something to show; otherwise `message` says why not.
+    `hits` are the excerpts the answer was written from (best first), `searched` is the supplier whose proposal was searched (None: all
+    of them), `narrowed` says the question named that supplier by itself, and `asked_ai` is False when no excerpt shared a word with
+    the question, so the AI was not asked at all."""
+
+    ok: bool
+    message: str = ""
+    answer: qa_agent.Answer | None = None
+    hits: tuple[retrieval.Hit, ...] = ()
+    searched: str | None = None
+    narrowed: bool = False
+    asked_ai: bool = False
+
+
+def chunks_of(proposals: Sequence[Proposal]) -> tuple[pdf_tool.Chunk, ...]:
+    """Every readable proposal cut into chunks of about 300 words (spec 12), tagged with the supplier's name as it is saved in the run and
+    with the page. A file that could not be read, or a proposal with no name, adds nothing. Kept in the visitor's session, never saved."""
+    chunks: list[pdf_tool.Chunk] = []
+    for proposal in proposals:
+        name = proposal.supplier_name.strip()
+        if proposal.pdf is not None and name:
+            chunks.extend(pdf_tool.build_chunks(proposal.pdf.pages, name))
+    return tuple(chunks)
+
+
+def ask_question(
+    run_id: str, question: str, chunks: Sequence[pdf_tool.Chunk], settings: client.LLMSettings, supplier: str | None = None,
+    actor: str = REVIEWER,
+    *,
+    backend: client.Backend | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> AskOutcome:
+    """Answer one question about the proposals of a finished run. The search picks the best excerpts (`supplier` limits it to one
+    proposal; with None, a question that names exactly one supplier is narrowed to it), the AI answers from them only, and Python
+    checks the page references afterwards. A question that shares no word with any excerpt is answered "Not stated in the proposal."
+    without asking the AI. Nothing about the evaluation changes: only the question, the sources and the answer are written to the
+    audit log, and the tokens and cost of the call are added to the run. The proposal text itself is never written anywhere."""
+    who = actor or REVIEWER
+    try:
+        text = qa_agent.clean_question(question)
+        if not text:
+            return AskOutcome(False, "Type a question first.")
+        if settings.key_is_in(text):
+            return AskOutcome(False, KEY_IN_QUESTION_TEXT)
+        if not chunks:
+            return AskOutcome(False, NO_TEXT_TEXT)
+        with repository.connection() as conn:
+            run = repository.get_run(conn, run_id)
+        if run is None:
+            return AskOutcome(False, "This run was not found.")
+        if run.status not in (repository.RUN_EVALUATED, repository.RUN_FINAL):
+            return AskOutcome(False, f"This run is {run.status.lower()}, so there is nothing to ask about.")
+        index = retrieval.Index(chunks)
+        if supplier is not None and supplier not in index.suppliers:
+            return AskOutcome(False, f"There is no proposal text for {supplier} in this session. Choose another supplier or All suppliers.")
+        named = index.supplier_named(text) if supplier is None else None
+        searched = supplier or named
+        hits = index.search(text, searched)
+
+        base = {"question": text, "supplier": searched, "narrowed": named is not None, "requested_by": who,
+                "sources": [{"supplier": h.supplier, "page": h.page, "chunk": h.number, "score": h.score} for h in hits]}
+        if not hits:
+            answer = qa_agent.not_stated_answer()
+            with repository.connection() as conn:
+                audit.log_event(conn, run_id, "AI", "question_answered", {**base, "answer": answer.text, "not_stated": True,
+                                                                        "llm_calls": 0, "model": settings.model, "provider": settings.provider})
+            return AskOutcome(True, "", answer, (), searched, named is not None, False)
+
+        try:
+            answer = qa_agent.answer_question(text, hits, settings, backend=backend, sleep=sleep)
+        except client.LLMError as exc:
+            _log_question_failure(run_id, base, exc.kind, settings)
+            return AskOutcome(False, f"The AI could not be reached: {exc.user_message}", hits=hits, searched=searched, narrowed=named is not None)
+        except qa_agent.QAError as exc:
+            _log_question_failure(run_id, base, "answer", settings)
+            return AskOutcome(False, exc.user_message, hits=hits, searched=searched, narrowed=named is not None)
+        with repository.connection() as conn:
+            repository.add_to_run_totals(conn, run_id, answer.tokens, answer.cost_usd)
+            audit.log_event(conn, run_id, "AI", "question_answered", {
+                **base, "answer": answer.text, "not_stated": answer.not_stated, "llm_calls": 1,
+                "citations": [{"supplier": c.supplier, "pages": list(c.pages), "verified": c.verified} for c in answer.citations],
+                "model": settings.model, "provider": settings.provider, "tokens": answer.tokens, "cost_usd": answer.cost_usd})
+        return AskOutcome(True, "", answer, hits, searched, named is not None, True)
+    except (sqlite3.Error, OSError):
+        return AskOutcome(False, DATABASE_BUSY_ASK_TEXT)
+
+
+def _log_question_failure(run_id: str, base: dict[str, Any], kind: str, settings: client.LLMSettings) -> None:
+    """A question the AI could not answer is still written to the audit log (best effort: a locked database never hides the reason)."""
+    try:
+        with repository.connection() as conn:
+            audit.log_event(conn, run_id, "AI", "question_failed", {**base, "kind": kind, "model": settings.model, "provider": settings.provider})
+    except (sqlite3.Error, OSError):
+        pass

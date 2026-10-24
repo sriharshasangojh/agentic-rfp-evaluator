@@ -39,6 +39,7 @@ RESULT_KEY = "ne_result"           # the RunResult of the latest run, shown unti
 BUTTON_KEY = "ne_evaluate"
 SHOWN_RUN_KEY = "shown_run_id"     # the finished run that the Overview (and later the Scorecards and Audit tabs) show
 REQUEST_KEY = "ne_run_requested"   # set by the button; the next redraw of this tab runs the batch (and clears it at once)
+PROPOSAL_CHUNKS_KEY = "ne_proposal_chunks"   # (run id, the proposals cut into chunks) of the latest finished run, for the Ask the RFP tab
 
 MIN_DATE = date(orchestrator.FIRST_YEAR, 1, 1)   # the range the date box accepts
 MAX_DATE = date(orchestrator.LAST_YEAR, 12, 31)
@@ -180,6 +181,7 @@ def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTer
     st.session_state[RESULT_KEY] = result
     if result is not None and result.status == repository.RUN_EVALUATED:
         st.session_state[SHOWN_RUN_KEY] = result.run_id
+        st.session_state[PROPOSAL_CHUNKS_KEY] = (result.run_id, orchestrator.chunks_of(proposals))   # session only, never saved (DECISIONS 120)
     st.rerun()
 
 

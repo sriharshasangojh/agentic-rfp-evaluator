@@ -107,3 +107,25 @@ def marks(stored, name: str) -> list[float]:
 def whole_database() -> str:
     with repository.connection() as conn:
         return "\n".join(conn.iterdump())
+
+
+# ---------------------------------------------------------------- proposals with real, searchable text (feature F14, Ask the RFP)
+
+EXCERPT_SENTINEL = "ZXQ-ASK-EXCERPT-SENTINEL-8812"
+ASK_TEXTS = {
+    APEX: (f"Apex offers a three year on-site warranty with next-day repair. {EXCERPT_SENTINEL}",
+           "Battery life measured at eleven hours of video playback."),
+    BRIGHT: ("BrightPath offers a one year carry-in warranty.", "Delivery takes eight weeks."),
+    NEXA: ("NexaWorks keeps its price for orders placed next year.", "Warranty is on-site with repair on the next business day."),
+    HORIZON: ("Horizon Datacom ships within three weeks.", "The support desk is open on weekdays."),
+    ORBIT: ("Orbit Digital has supplied many business laptops.", "Orbit gives a three year warranty."),
+}
+
+
+def extracted_pdf(pages: tuple[str, ...], seed_text: str = "x") -> pdf_tool.ExtractedPdf:
+    return pdf_tool.ExtractedPdf(sha256=hashlib.sha256((seed_text + "".join(pages)).encode()).hexdigest(), pages=pages, backend="pypdf")
+
+
+def ask_proposals() -> list[orchestrator.Proposal]:
+    """The five suppliers of `evaluated_run`, each with two short pages of text that a question can find."""
+    return [orchestrator.Proposal(f"{n.lower().replace(' ', '_')}.pdf", n, when, rating, extracted_pdf(ASK_TEXTS[n], n)) for n, when, rating, _s in FIVE]
