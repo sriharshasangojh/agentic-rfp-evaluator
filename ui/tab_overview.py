@@ -21,6 +21,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from typing import Any
 
+import plotly.graph_objects as go
 import streamlit as st
 
 from agents import evaluator, orchestrator
@@ -39,6 +40,8 @@ NOT_ELIGIBLE = "Not eligible"                            # the spec's word (9.3)
 MEETS_MUST_HAVES = "Meets must-haves"                     # what the badge on this tab prints for an eligible supplier
 
 DETAILS_LABEL = "Show details (full leaderboard, scores out of 100, tie-breaks)"
+NO_PRICE_CHART_TEXT = "No chart: this run has no budget, or no supplier states a total price."
+PRICE_NOTE = "Teal bars are within the budget, pink bars are over it. The dashed line is the budget."
 MUSTHAVES_NOTE = "Hover over a \u2713 or \u2717 to see the reason."
 NO_MUSTHAVES_TEXT = "No must-haves were checked in this run."
 PPI_NAME = "Score vs other bids"
@@ -184,6 +187,17 @@ class Verdict:
 
 
 @dataclass(frozen=True)
+class PriceChart:
+    """The bars of "Price against budget": one per supplier that states a total, in rank order."""
+
+    names: tuple[str, ...]
+    totals_rs: tuple[float, ...]
+    over: tuple[bool, ...]              # True where the total is above the budget
+    budget_rs: float
+    not_stated: tuple[str, ...]         # suppliers with no total in their proposal (no bar)
+
+
+@dataclass(frozen=True)
 class Overview:
     run_line: str
     rows: tuple[Row, ...]
@@ -196,6 +210,7 @@ class Overview:
     verdict: Verdict
     budget_line: str | None             # "Budget for this run: Rs 60 lakh for 100 laptops", or None for a run saved without one
     musthaves: tuple[MustHave, ...]     # the columns of the must-haves grid
+    price_chart: PriceChart | None = None   # the price-against-budget bars (feature F17); None when there is nothing to draw
 
 
 def _number(value: Any) -> float | None:
@@ -343,6 +358,40 @@ def _budget_line(run: repository.RunRecord) -> str | None:
     return line
 
 
+def build_price_chart(rows: tuple[Row, ...]) -> PriceChart | None:
+    """The chart data, or None when the run has no budget or no supplier states a total."""
+    budget = next((r.price.budget_rs for r in rows if r.price.budget_rs), None)
+    if budget is None:
+        return None
+    drawn = [r for r in rows if r.price.total_rs is not None]
+    if not drawn:
+        return None
+    return PriceChart(
+        names=tuple(r.name for r in drawn), totals_rs=tuple(float(r.price.total_rs) for r in drawn),   # type: ignore[arg-type]
+        over=tuple(bool(r.price.over_by_rs) for r in drawn), budget_rs=float(budget),
+        not_stated=tuple(r.name for r in rows if r.price.total_rs is None))
+
+
+def price_figure(chart: PriceChart) -> go.Figure:
+    """Horizontal bars of each total in lakh: teal within the budget, pink over it, with a dashed line at the budget."""
+    lakh = 100000.0
+    figure = go.Figure(go.Bar(
+        y=list(chart.names), x=[t / lakh for t in chart.totals_rs], orientation="h",
+        marker={"color": [theme.OVER_BUDGET if o else theme.WITHIN_BUDGET for o in chart.over]},
+        text=[insights.format_lakh(t) for t in chart.totals_rs], textposition="inside", insidetextanchor="start",
+        textfont={"color": "#FFFFFF", "size": 14},
+        customdata=[f"Rs {t:,.0f}" for t in chart.totals_rs], hovertemplate="%{y}<br>%{customdata}<extra></extra>"))
+    figure.add_vline(x=chart.budget_rs / lakh, line_dash="dash", line_color=theme.BUDGET_LINE, line_width=2,
+                     annotation_text=f"Budget {insights.format_lakh(chart.budget_rs)}", annotation_position="top")
+    top = max(max(chart.totals_rs), chart.budget_rs) / lakh
+    figure.update_layout(
+        height=110 + 56 * len(chart.names), margin={"l": 10, "r": 20, "t": 40, "b": 10}, showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font={"color": theme.TEXT},
+        xaxis={"range": [0, top * 1.1], "title": {"text": "Total price (Rs lakh)"}, "gridcolor": theme.BORDER, "zeroline": False},
+        yaxis={"autorange": "reversed", "automargin": True})
+    return figure
+
+
 def _capital(text: str) -> str:
     return text[:1].upper() + text[1:]
 
@@ -418,7 +467,7 @@ def build_overview(run: repository.RunRecord, suppliers: list[repository.StoredS
     if recommended is not None and recommended.reason:
         verdict = replace(verdict, reason=recommended.reason)
     return Overview(_run_line(run, len(rows)), rows, recommendation, recommended, runner_up, top, warning, criteria,
-                    verdict, _budget_line(run), tuple(columns.values()))
+                    verdict, _budget_line(run), tuple(columns.values()), build_price_chart(rows))
 
 
 # ---------------------------------------------------------------- the two small HTML tables
@@ -612,6 +661,15 @@ def _show(overview: Overview) -> None:
     st.markdown("#### Strength by criterion")
     st.markdown(strength_html(overview.rows, overview.criteria), unsafe_allow_html=True)
     _small(STRENGTH_NOTE)
+
+    st.markdown("#### Price against budget")
+    if overview.price_chart is None:
+        _small(NO_PRICE_CHART_TEXT)
+    else:
+        st.plotly_chart(price_figure(overview.price_chart), width="stretch")
+        _small(PRICE_NOTE)
+        if overview.price_chart.not_stated:
+            _small("No total price stated, so no bar: " + ", ".join(overview.price_chart.not_stated) + ".")
 
     st.markdown("#### Why the top three")
     st.markdown(cards_html(overview.rows, recommended_name), unsafe_allow_html=True)

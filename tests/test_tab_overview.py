@@ -748,6 +748,7 @@ class _Page:
         self.calls: list[tuple[str, str]] = []
         self.expanders: list[tuple[str, bool]] = []
         self.inside: list[str] = []
+        self.figures: list[tuple[Any, dict]] = []
         self._depth = 0
 
     def markdown(self, text, **kwargs):
@@ -755,6 +756,10 @@ class _Page:
 
     def warning(self, text, **kwargs):
         self.calls.append(("warning", str(text)))
+
+    def plotly_chart(self, figure, **kwargs):
+        self.calls.append(("plotly_chart", "<<chart>>"))
+        self.figures.append((figure, kwargs))
 
     def expander(self, label, expanded=False, **kwargs):
         page = self
@@ -796,9 +801,9 @@ def test_the_page_order_is_banner_budget_must_haves_strength_cards_then_details(
     page = drawn(supplier("Apex", 1, total=WITHIN, result=seeded()), supplier("Nexa", 2, result=seeded()))
     assert page.calls[0][1].startswith("<style>") and "ov-banner" in page.calls[0][1]
     assert "Budget for this run: Rs 60 lakh for 100 laptops" in page.calls[1][1]
-    assert headings(page) == ["#### Must-haves", "#### Strength by criterion", "#### Why the top three", "#### Leaderboard"]
+    assert headings(page) == ["#### Must-haves", "#### Strength by criterion", "#### Price against budget", "#### Why the top three", "#### Leaderboard"]
     marks = [text for kind, text in page.calls if (kind == "markdown" and text.startswith("####")) or kind == "expander"]
-    assert marks == ["#### Must-haves", "#### Strength by criterion", "#### Why the top three", tab_overview.DETAILS_LABEL, "#### Leaderboard"]
+    assert marks == ["#### Must-haves", "#### Strength by criterion", "#### Price against budget", "#### Why the top three", tab_overview.DETAILS_LABEL, "#### Leaderboard"]
 
 
 def test_the_strength_table_stays_visible_and_unchanged_outside_the_expander():
@@ -868,9 +873,68 @@ def test_the_hover_hint_for_the_grid_is_shown_under_it():
     assert any(tab_overview.MUSTHAVES_NOTE in text for _kind, text in page.calls)
 
 
-def test_the_page_never_shows_a_chart_or_a_slider():
+def test_the_page_has_exactly_one_chart_and_no_slider():
     source = Path(tab_overview.__file__).read_text(encoding="utf-8")
-    assert "plotly" not in source and "st.slider" not in source and "st.plotly_chart" not in source       # spec 18
+    assert "st.slider" not in source and source.count("st.plotly_chart(") == 1       # spec 18: the Overview's one chart
+
+
+# ---------------------------------------------------------------- price against budget (feature F17)
+
+def chart_of(*suppliers, **options) -> tab_overview.PriceChart | None:
+    return overview_of(*suppliers, **options).price_chart
+
+
+def test_one_bar_per_supplier_that_states_a_total_in_rank_order_with_the_budget():
+    chart = chart_of(supplier("Apex", 1, total=WITHIN), supplier("Nexa", 2, total=OVER), supplier("Orbit", 3))
+    assert chart == tab_overview.PriceChart(("Apex", "Nexa"), (WITHIN, OVER), (False, True), 6000000.0, ("Orbit",))
+
+
+def test_a_total_exactly_at_the_budget_is_within_it():
+    chart = chart_of(supplier("Apex", 1, total=6000000))
+    assert chart is not None and chart.over == (False,)
+
+
+def test_there_is_no_chart_without_a_budget_or_without_any_total():
+    assert chart_of(supplier("Apex", 1, total=WITHIN), budget=None) is None
+    assert chart_of(supplier("Apex", 1), supplier("Nexa", 2)) is None
+
+
+def test_the_figure_uses_the_theme_colours_and_a_dashed_budget_line_in_lakh():
+    chart = chart_of(supplier("Apex", 1, total=WITHIN), supplier("Nexa", 2, total=OVER))
+    figure = tab_overview.price_figure(chart)
+    bar = figure.data[0]
+    assert list(bar.marker.color) == [tab_overview.theme.WITHIN_BUDGET, tab_overview.theme.OVER_BUDGET]
+    assert list(bar.x) == [56.0, 73.986] and list(bar.y) == ["Apex", "Nexa"]
+    assert list(bar.text) == ["Rs 56 lakh", "Rs 73.99 lakh"] and bar.textposition == "inside" and bar.insidetextanchor == "start"     # inside, so the dashed line never cuts a label
+    line = figure.layout.shapes[0]
+    assert (line.x0, line.x1) == (60.0, 60.0) and line.line.dash == "dash" and line.line.color == tab_overview.theme.BUDGET_LINE
+    assert figure.layout.xaxis.range[1] > 73.986            # room for the longest bar
+
+
+def test_the_budget_line_is_inside_the_axis_when_every_bar_is_shorter():
+    figure = tab_overview.price_figure(chart_of(supplier("Apex", 1, total=1_000_000)))
+    assert figure.layout.xaxis.range[1] > 60.0
+
+
+def test_the_page_draws_the_chart_after_the_strength_table_and_names_suppliers_without_a_total():
+    page = drawn(supplier("Apex", 1, total=WITHIN, result=seeded()), supplier("Nexa", 2, result=seeded()))
+    kinds = [kind for kind, _t in page.calls]
+    assert kinds.count("plotly_chart") == 1 and page.figures[0][1] == {"width": "stretch"}
+    texts = [t for _k, t in page.calls]
+    assert texts.index("#### Strength by criterion") < texts.index("#### Price against budget") < texts.index("<<chart>>") < texts.index("#### Why the top three")
+    assert any(tab_overview.PRICE_NOTE in t for t in texts)
+    assert any("No total price stated, so no bar: Nexa." in t for t in texts)
+
+
+def test_the_page_says_why_there_is_no_chart():
+    page = drawn(supplier("Apex", 1, result=seeded()))
+    assert not any(kind == "plotly_chart" for kind, _t in page.calls)
+    assert any(tab_overview.NO_PRICE_CHART_TEXT in t for _k, t in page.calls)
+
+
+def test_a_supplier_name_with_html_is_only_text_in_the_figure():
+    chart = chart_of(supplier("<b>X</b>", 1, total=WITHIN))
+    assert list(tab_overview.price_figure(chart).data[0].y) == ["<b>X</b>"]
 
 
 # ---------------------------------------------------------------- a real batch, read back
