@@ -12,7 +12,7 @@ EXPECTED_TABS = [
     "Overview",
     "Scorecards",
     "Analysis",
-    "Review",
+    "Re-evaluation",
     "Ask the RFP",
     "Audit",
 ]

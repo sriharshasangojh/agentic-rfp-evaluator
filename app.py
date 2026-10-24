@@ -19,14 +19,14 @@ from ui import (
 from ui.sidebar import render_sidebar
 from ui.theme import inject_theme_css
 
-# Exactly eight tabs, in this order (spec section 13.3).
+# Exactly eight tabs, in this order (spec section 13.3). The sixth is called "Re-evaluation" at the user's request; the spec calls it "Review".
 TABS = (
     ("Setup", tab_setup),
     ("New evaluation", tab_new_evaluation),
     ("Overview", tab_overview),
     ("Scorecards", tab_scorecards),
     ("Analysis", tab_analysis),
-    ("Review", tab_review),
+    ("Re-evaluation", tab_review),
     ("Ask the RFP", tab_ask),
     ("Audit", tab_audit),
 )

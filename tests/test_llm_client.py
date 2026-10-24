@@ -134,6 +134,17 @@ def test_printing_the_settings_never_shows_the_key():
     assert KEY not in repr(SETTINGS) and KEY not in str(SETTINGS)
 
 
+def test_the_settings_can_say_whether_a_text_contains_the_key_without_handing_it_out():
+    long_key = LLMSettings("OpenAI", "m", "fake-key-12345")
+    assert long_key.key_is_in("please use fake-key-12345 for this") and long_key.key_is_in("fake-key-12345")
+    assert not long_key.key_is_in("a laptop that lasts all day") and not long_key.key_is_in("") and not long_key.key_is_in(None)
+    assert LLMSettings("OpenAI", "m", "  fake-key-12345  ").key_is_in("my key is fake-key-12345.")      # the key is looked for as it is used
+    assert client.MIN_KEY_CHARS_CHECKED == 8
+    short = LLMSettings("OpenAI", "m", "laptop")                                                        # too short: it would match ordinary words
+    assert not short.key_is_in("a laptop that lasts all day") and not LLMSettings("OpenAI", "m", "").key_is_in("anything")
+    assert LLMSettings("OpenAI", "m", "12345678").key_is_in("x12345678x") and not LLMSettings("OpenAI", "m", "1234567").key_is_in("1234567")
+
+
 # ---------------------------------------------------------------- the model-list request
 
 @pytest.mark.parametrize("provider", CASES)

@@ -134,3 +134,28 @@ BEFORE DELETE ON audit_log
 BEGIN
     SELECT RAISE(ABORT, 'audit_log is append-only');
 END;
+
+-- Attempts and reviewer actions are history: like the audit log, they can be added but never changed or removed (F13).
+CREATE TRIGGER IF NOT EXISTS attempts_no_update
+BEFORE UPDATE ON evaluation_attempts
+BEGIN
+    SELECT RAISE(ABORT, 'evaluation_attempts is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS attempts_no_delete
+BEFORE DELETE ON evaluation_attempts
+BEGIN
+    SELECT RAISE(ABORT, 'evaluation_attempts is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS feedback_no_update
+BEFORE UPDATE ON reviewer_feedback
+BEGIN
+    SELECT RAISE(ABORT, 'reviewer_feedback is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS feedback_no_delete
+BEFORE DELETE ON reviewer_feedback
+BEGIN
+    SELECT RAISE(ABORT, 'reviewer_feedback is append-only');
+END;

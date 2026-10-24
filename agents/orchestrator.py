@@ -7,6 +7,12 @@ under one run id, so nothing is lost if a run stops half way.
 Steps run here (spec 8): input checks, create the run, read the documents, evaluate each supplier, gates, rank,
 industry score, strength labels, save. Not here yet: the evidence check (F15) and the pros/cons wording (F16).
 
+The second half of the file is the human review (F13, spec section 11): the person says how satisfied they are with the
+recommendation (1 to 5). Satisfied: accept it. Not satisfied: they say what they are not satisfied with, the matching criterion
+counts for more in this run and every supplier is ranked again from the AI's saved marks (twice at most). `re_evaluate`, which asks
+the AI to read one supplier again with a comment, is kept for the "a score looks wrong" case (F19). Every step adds rows to the
+history tables; nothing is ever overwritten (the current result is updated, the decisions and audit rows stay).
+
 Rules kept here:
 * The proposals come from the upload box only; nothing is read from `data/proposals/` (DECISIONS 82).
 * Budget and quantity are inputs of the run (`PurchaseTerms`), stored with it (DECISIONS 69).
@@ -17,29 +23,32 @@ Rules kept here:
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
 import secrets
+import sqlite3
 import time
 import traceback
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from agents import evaluator
+from agents import evaluator, feedback
 from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
-from tools import industry, insights, pdf_tool, ranking
+from tools import industry, insights, pdf_tool, ranking, review, reweight
 
 MAX_PROPOSALS = 10
 RECOMMENDED_MINIMUM = 4
 EXPERIENCE_RATINGS = (1, 2, 3, 4, 5)
 BLOCKED = "Blocked"        # the inputs were not acceptable; nothing was created
 ATTEMPT_NO = 1             # the first evaluation of a supplier in a run (re-evaluations, F13, count up from here)
+REVIEWER = "reviewer"       # who an action is recorded under when the sidebar's reviewer name is empty
 
 
 # ---------------------------------------------------------------- the inputs
@@ -516,3 +525,451 @@ def run_evaluation(
             except Exception:
                 pass
         raise
+
+
+# ================================================================ human review (F13, spec section 11)
+
+@dataclass(frozen=True)
+class RunCriterion:
+    """A criterion as this RUN used it: its name, weight and maximum come from the run's snapshot, so a later change in Setup
+    does not alter an old run. Only the description (for the AI's prompt) is read from the marking scheme."""
+
+    criterion_id: int
+    name: str
+    description: str
+    weight: float
+    max_score: float
+
+
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """What a review action did, as one friendly sentence for the screen. `ok` is False when nothing was changed."""
+
+    ok: bool
+    message: str
+
+
+@dataclass(frozen=True)
+class _ReviewState:
+    run: repository.RunRecord
+    suppliers: dict[str, repository.StoredSupplier]
+    criteria: tuple[RunCriterion, ...]
+    feedback: tuple[repository.FeedbackRow, ...]
+
+    @property
+    def weights(self) -> list[ranking.CriterionWeight]:
+        return [ranking.CriterionWeight(c.criterion_id, c.weight, c.max_score) for c in self.criteria]
+
+    def criterion(self, criterion_id: int) -> RunCriterion:
+        for c in self.criteria:
+            if c.criterion_id == criterion_id:
+                return c
+        raise review.ReviewError("That criterion is not part of this run.")
+
+    def supplier(self, name: str) -> repository.StoredSupplier:
+        if name not in self.suppliers:
+            raise review.ReviewError(f"{name} is not part of this run.")
+        return self.suppliers[name]
+
+
+def _load_state(conn: sqlite3.Connection, run_id: str) -> _ReviewState:
+    run = repository.get_run(conn, run_id)
+    if run is None:
+        raise review.ReviewError("This run was not found.")
+    if run.status != repository.RUN_EVALUATED:
+        raise review.ReviewError(f"This run is {run.status.lower()}, so it can no longer be changed.")
+    stored = repository.list_supplier_results(conn, run_id)
+    if not stored:
+        raise review.ReviewError("This run has no saved results to review.")
+    descriptions = {c.criterion_id: c.description for c in repository.list_criteria(conn, run.template_id)}
+    criteria: list[RunCriterion] = []
+    for item in run.criteria_snapshot:
+        try:
+            criteria.append(RunCriterion(int(item["criterion_id"]), str(item["name"]), descriptions.get(int(item["criterion_id"]), ""),
+                                         float(item["weight"]), float(item["max_score"])))
+        except (KeyError, TypeError, ValueError):
+            raise review.ReviewError("This run's marking scheme was not saved properly, so it cannot be reviewed.") from None
+    if not criteria:
+        raise review.ReviewError("This run has no saved marking scheme, so it cannot be reviewed.")
+    return _ReviewState(run, {s.supplier_name: s for s in stored}, tuple(criteria), tuple(repository.list_feedback(conn, run_id)))
+
+
+def _terms_of(run: repository.RunRecord, consequence: str = "the AI cannot look at it again") -> industry.PurchaseTerms:
+    try:
+        return industry.PurchaseTerms(budget_rs=run.budget_rs, quantity=run.quantity)   # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise review.ReviewError(f"This run did not save its budget and quantity, so {consequence}.") from None
+
+
+def _board(stored: dict[str, repository.StoredSupplier]) -> list[dict[str, Any]]:
+    """The saved leaderboard, best first, as plain data."""
+    return [{"rank": s.final_rank, "supplier": s.supplier_name, "ppi": s.ppi, "absolute_score": s.absolute_score,
+             "eligible": s.gates_passed} for s in sorted(stored.values(), key=lambda s: (s.final_rank, s.supplier_name))]
+
+
+def _rank_inputs(state: _ReviewState, results: dict[str, dict[str, Any]],
+                 weights: Sequence[ranking.CriterionWeight] | None = None) -> ranking.RankingResult:
+    return review.rank_results(results, state.weights if weights is None else weights,
+                               {n: s.submission_date for n, s in state.suppliers.items()},
+                               {n: s.experience_rating for n, s in state.suppliers.items()})
+
+
+def _save_ranking(conn: sqlite3.Connection, run_id: str, state: _ReviewState, ranked: ranking.RankingResult,
+                  results: dict[str, dict[str, Any]], eligible: dict[str, bool], industry_scores: dict[str, float]) -> None:
+    for r in ranked.suppliers:
+        repository.update_supplier_result(
+            conn, run_id=run_id, supplier_name=r.name, absolute_score=r.absolute_score, ppi=r.ppi,
+            industry_score=industry_scores.get(r.name, state.suppliers[r.name].industry_score), final_rank=r.rank,
+            gates_passed=eligible[r.name], result_json=json.dumps(results[r.name]))
+
+
+def _log_ranking(conn: sqlite3.Connection, run_id: str, ranked: ranking.RankingResult, why: str) -> None:
+    audit.log_event(conn, run_id, "system", "ranking_computed", {
+        "top3": [{"rank": r.rank, "supplier": r.name, "ppi": r.ppi, "absolute_score": r.absolute_score}
+                 for r in ranked.suppliers[:3]],
+        "tie_break_explanations": list(ranked.tie_break_explanations), "warnings": list(ranked.warnings), "because": why})
+
+
+def _failed_outcome(error: review.ReviewError | sqlite3.Error | OSError) -> ReviewOutcome:
+    if isinstance(error, review.ReviewError):
+        return ReviewOutcome(False, str(error))
+    return ReviewOutcome(False, "The change could not be saved because the database was busy or unavailable. Nothing was changed. "
+                                "Wait a few seconds and try again.")
+
+
+def _breakdown(industry_for: industry.IndustryResult) -> dict[str, Any]:
+    """The industry grade as it is saved in a supplier's result."""
+    return {"score": industry_for.score,
+            "attributes": [{"attribute_key": a.attribute_key, "label": a.label, "grade": a.grade, "points": a.points,
+                            "weight": a.weight, "reason": a.reason} for a in industry_for.attributes]}
+
+
+def _re_evaluated_result(old: dict[str, Any], outcome: evaluator.EvaluationOutcome, criteria: Sequence[RunCriterion],
+                         gate_results: Sequence[gates_tool.GateResult], industry_for: industry.IndustryResult) -> dict[str, Any]:
+    """The supplier's saved result with everything the new evaluation decides replaced: marks, reasons, evidence, facts, must-haves,
+    industry grade, risks and warnings. The marks' benchmark, gap and relative % are filled in when everyone is re-ranked."""
+    card = outcome.scorecard
+    by_id = {c.criterion_id: c for c in card.criteria}
+    result = dict(old)
+    result.update(
+        eligible=gates_tool.is_eligible(gate_results), gates=gates_tool.gate_status(gate_results),
+        gate_details=[{"gate_id": g.gate_id, "name": g.name, "passed": g.passed, "reason": g.reason} for g in gate_results],
+        criteria=[{"criterion_id": c.criterion_id, "name": c.name, "score": by_id[c.criterion_id].score, "max_score": c.max_score,
+                   "benchmark": 0.0, "gap": 0.0, "relative_pct": 0.0, "weight": c.weight, "strength": "",
+                   "justification": by_id[c.criterion_id].justification, "evidence": by_id[c.criterion_id].evidence,
+                   "evidence_found": None, "filled_by_validator": by_id[c.criterion_id].filled_by_validator} for c in criteria],
+        extracted_facts=card.extracted_facts.model_dump(), industry_score=industry_for.score,
+        industry_breakdown=_breakdown(industry_for),
+        risks=list(card.risks), overall_summary=card.overall_summary, warnings=[*outcome.warnings, *industry_for.warnings],
+        evaluation_failed=outcome.failed)
+    return result
+
+
+def re_evaluate(
+    run_id: str, supplier_name: str, criterion_id: int | None, comment: str,
+    proposal: pdf_tool.ExtractedPdf, settings: client.LLMSettings, actor: str = REVIEWER,
+    *,
+    backend: client.Backend | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> ReviewOutcome:
+    """Ask the AI to evaluate ONE supplier again, with the reviewer's comment in <reviewer_feedback> (spec 11.1 rules 3 and 4).
+    The Review tab does not call this: it is the "a score looks wrong" case of the "Not happy?" flow (F19).
+
+    At most 2 times per supplier. The new marks become the supplier's current marks, its must-haves and industry grade are worked
+    out again from the new facts, and EVERY supplier is re-ranked (the benchmarks depend on everyone). The proposal must be the
+    very file that was evaluated (same SHA-256 fingerprint). Nothing is written until the AI's answer is in and usable, and then
+    everything is written in one go: a reply that cannot be read, a provider problem or a stopped script changes nothing and does
+    not use up one of the 2. Evidence checking joins here in F15 (spec 9.2).
+    """
+    who = actor or REVIEWER
+    log_run_id = run_id
+
+    def failure(reason: str, kind: str, outcome: evaluator.EvaluationOutcome | None = None) -> ReviewOutcome:
+        try:
+            with repository.connection() as conn:
+                audit.log_event(conn, log_run_id, "AI", "re_evaluation_failed", {
+                    "supplier": supplier_name, "criterion_id": criterion_id, "kind": kind, "model": settings.model,
+                    "provider": settings.provider, "tokens": outcome.tokens if outcome else None})
+                if outcome is not None:
+                    repository.add_to_run_totals(conn, log_run_id, outcome.tokens, outcome.cost_usd)
+        except (sqlite3.Error, OSError):
+            pass
+        return ReviewOutcome(False, reason)
+
+    try:
+        text = review.clean_text(comment)
+        if not text:
+            raise review.ReviewError("Write a comment that says what looks wrong, so the AI knows what to look at again.")
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id)
+            attempt = repository.current_attempt_no(conn, run_id, supplier_name)
+            documents = {d.supplier_name: d for d in repository.list_documents(conn, run_id)}
+            all_gates = repository.list_gates(conn, state.run.template_id)
+            benchmarks = repository.list_benchmarks(conn, state.run.template_id)
+        stored = state.supplier(supplier_name)
+        criterion = state.criterion(criterion_id) if criterion_id is not None else None
+        if attempt < 1:
+            raise review.ReviewError(f"{supplier_name} has no saved evaluation to look at again.")
+        if review.re_evaluations_left(attempt) <= 0:
+            raise review.ReviewError(f"The AI has already looked at {supplier_name} again {review.MAX_RE_EVALUATIONS} times.")
+        document = documents.get(supplier_name)
+        if document is None or document.sha256 != proposal.sha256:
+            raise review.ReviewError(f"This is not the proposal that was evaluated for {supplier_name} (the fingerprints differ). "
+                                     "Upload the same file again on the New evaluation tab.")
+        if not proposal.has_text:
+            raise review.ReviewError("This proposal has no readable text, so it cannot be evaluated again.")
+        terms = _terms_of(state.run)
+        old_results = {n: s.result for n, s in state.suppliers.items()}
+        old_ranked = _rank_inputs(state, old_results)
+        before = _board(state.suppliers)
+
+        feedback = review.feedback_for_prompt(criterion_id, criterion.name if criterion else None, text)
+        try:
+            outcome = evaluator.evaluate_supplier(supplier_name, proposal.text, state.criteria, terms, settings,
+                                                  reviewer_feedback=feedback, backend=backend, sleep=sleep)
+        except client.LLMError as exc:
+            return failure(f"The AI could not be reached: {exc.user_message} Nothing was changed.", exc.kind)
+        except evaluator.EvaluatorError as exc:
+            return failure(f"{exc.user_message} Nothing was changed.", "evaluator")
+        if outcome.failed:
+            return failure("The AI's reply could not be read, so nothing was changed. This did not use up one of the "
+                           f"{review.MAX_RE_EVALUATIONS} re-evaluations. Try again.", "unreadable_reply", outcome)
+
+        facts = outcome.scorecard.extracted_facts.model_dump()
+        saved_gates = {g.get("gate_id") for g in stored.result.get("gate_details") or [] if isinstance(g, dict)}
+        gate_list = [g for g in all_gates if g.gate_id in saved_gates] or [g for g in all_gates if g.is_active]
+        gate_results = gates_tool.evaluate_gates(gate_list, facts)
+        industry_for = industry.industry_score(facts, benchmarks, state.criteria, terms)
+        results = dict(old_results)
+        results[supplier_name] = _re_evaluated_result(stored.result, outcome, state.criteria, gate_results, industry_for)
+        ranked = _rank_inputs(state, results)
+        new_results = review.apply_ranking(results, ranked, old_ranked.warnings)
+        eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
+        eligible[supplier_name] = gates_tool.is_eligible(gate_results)
+        after = review.standings(ranked, eligible)
+        ids = [c.criterion_id for c in state.criteria]
+        old_scores, new_scores = review.scores_of(stored.result, ids), review.scores_of(results[supplier_name], ids)   # the marks that count
+        changes = [{"criterion_id": c.criterion_id, "name": c.name, "old": old_scores[c.criterion_id], "new": new_scores[c.criterion_id]}
+                   for c in state.criteria]
+        rank_before, rank_after = review.movement(before, after, supplier_name)
+        new_attempt = attempt + 1
+        created = _iso(now())
+        rows = [repository.AttemptRow(c.criterion_id, c.score, c.justification, c.evidence, None, outcome.raw_reply if i == 0 else None)
+                for i, c in enumerate(outcome.scorecard.criteria)]
+        with repository.connection() as conn:
+            if repository.current_attempt_no(conn, run_id, supplier_name) != attempt:
+                raise review.ReviewError(f"{supplier_name} was changed in another window. Reload the page and try again.")
+            repository.add_attempt(conn, run_id, supplier_name, new_attempt, rows, created)
+            repository.add_feedback(
+                conn, run_id, action=repository.ACTION_RE_EVALUATE, created_at=created, supplier_name=supplier_name,
+                criterion_id=criterion_id, attempt_no=new_attempt, comment=text,
+                details={"from_attempt": attempt, "to_attempt": new_attempt, "changes": changes, "before": before, "after": after,
+                         "rank_before": rank_before, "rank_after": rank_after, "recommended_before": review.recommended_of(before),
+                         "recommended_after": review.recommended_of(after), "model": settings.model, "provider": settings.provider,
+                         "tokens": outcome.tokens, "cost_usd": outcome.cost_usd, "by": who})
+            _save_ranking(conn, run_id, state, ranked, new_results, eligible, {supplier_name: industry_for.score})
+            repository.add_to_run_totals(conn, run_id, outcome.tokens, outcome.cost_usd)
+            audit.log_event(conn, run_id, "AI", "supplier_re_evaluated", {
+                "supplier": supplier_name, "criterion_id": criterion_id, "from_attempt": attempt, "attempt_no": new_attempt,
+                "model": settings.model, "provider": settings.provider, "llm_calls": outcome.attempts, "tokens": outcome.tokens,
+                "cost_usd": outcome.cost_usd, "requested_by": who, "feedback": text, "changes": changes,
+                "rank_before": rank_before, "rank_after": rank_after})
+            if outcome.warnings:
+                audit.log_event(conn, run_id, "AI", "validation_warnings", {"supplier": supplier_name, "warnings": list(outcome.warnings)})
+            audit.log_event(conn, run_id, "system", "gate_results", {
+                "supplier": supplier_name, "gates": gates_tool.gate_status(gate_results),
+                "failed": [f"{g.name}: {g.reason}" for g in gates_tool.failed_gates(gate_results)]})
+            _log_ranking(conn, run_id, ranked, f"re-evaluation of {supplier_name}")
+        parts = [f"Re-evaluated {supplier_name} (attempt {new_attempt}).", review.describe_changes(changes),
+                 review.describe_move(supplier_name, rank_before, rank_after)]
+        return ReviewOutcome(True, " ".join(p for p in parts if p))
+    except (review.ReviewError, sqlite3.Error, OSError) as error:
+        return _failed_outcome(error)
+
+
+# ---------------------------------------------------------------- satisfaction: accept, or change the priorities (spec 11.2)
+
+ROUNDS_USED_TEXT = (f"All {reweight.MAX_ROUNDS} rounds of changing the priorities have been used. "
+                    "The ranking stays as it is; you can still accept the recommendation.")
+ANSWERED_TEXT = "This question was already answered, here or in another window. Reload the page to see the latest result."
+PICK_AN_OPTION = "Pick one of the options, or write it a different way."
+
+
+@dataclass(frozen=True)
+class Understanding:
+    """What the AI made of a typed need. `ok` means it proposes to raise `criterion_id`, and `reading` is the sentence the person
+    confirms; otherwise `message` says why nothing was proposed. Nothing is ever changed by this step."""
+
+    ok: bool
+    message: str
+    criterion_id: int | None = None
+    reading: str = ""
+
+
+def _check_round(state: _ReviewState, round_no: int) -> None:
+    """The question being answered must be the one the run is on (not an old page, not a second click)."""
+    if round_no != reweight.rounds_used(state.feedback) + 1:
+        raise review.ReviewError(ANSWERED_TEXT)
+
+
+def _weights_as_data(criteria: Sequence[RunCriterion]) -> list[dict[str, Any]]:
+    return [{"criterion_id": c.criterion_id, "name": c.name, "weight": c.weight} for c in criteria]
+
+
+def understand_need(
+    run_id: str, text: str, settings: client.LLMSettings, actor: str = REVIEWER,
+    *,
+    backend: client.Backend | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Understanding:
+    """The person chose "None of the above" and wrote what they need. The AI reads it and PROPOSES one action (spec 7.5); the
+    person confirms the reading before anything changes, so nothing is changed here. Only a "reweight" that points at a criterion
+    of this run can be carried out in this version; anything else is explained and the person picks an option instead. The
+    tokens and cost of the call are added to the run, and the call is written to the audit log."""
+    who = actor or REVIEWER
+
+    def failure(reason: str, kind: str) -> Understanding:
+        try:
+            with repository.connection() as conn:
+                audit.log_event(conn, run_id, "AI", "need_interpretation_failed",
+                                {"kind": kind, "model": settings.model, "provider": settings.provider, "requested_by": who})
+        except (sqlite3.Error, OSError):
+            pass
+        return Understanding(False, reason)
+
+    try:
+        need = reweight.clean_need(text)
+        if not need:
+            raise review.ReviewError("Write what you are not satisfied with.")
+        if settings.key_is_in(need):
+            raise review.ReviewError("What you wrote contains your API key. Remove it and try again. Nothing was sent.")
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id)
+        if reweight.rounds_left(state.feedback) <= 0:
+            raise review.ReviewError(ROUNDS_USED_TEXT)
+        try:
+            reading = feedback.interpret(need, state.criteria, settings, backend=backend, sleep=sleep)
+        except client.LLMError as exc:
+            return failure(f"The AI could not be reached: {exc.user_message} Nothing was changed.", exc.kind)
+        except feedback.FeedbackError as exc:
+            return failure(f"{exc.user_message} Nothing was changed.", "feedback")
+        with repository.connection() as conn:
+            repository.add_to_run_totals(conn, run_id, reading.tokens, reading.cost_usd)
+            audit.log_event(conn, run_id, "AI", "need_interpreted", {
+                "text": need, "action": reading.action, "criterion_id": reading.criterion_id, "reading": reading.reading,
+                "readable": reading.readable, "llm_calls": reading.attempts, "model": settings.model, "provider": settings.provider,
+                "tokens": reading.tokens, "cost_usd": reading.cost_usd, "requested_by": who})
+        if reading.action == "reweight" and reading.criterion_id is not None:
+            return Understanding(True, "", reading.criterion_id, reading.reading)
+        if not reading.readable:
+            return Understanding(False, f"The AI's reply could not be read. {PICK_AN_OPTION} Nothing was changed.")
+        said = reweight.UNSUPPORTED_ACTIONS.get(reading.action, "I could not match that to anything this evaluation looks at.")
+        return Understanding(False, f"{said} {PICK_AN_OPTION} Nothing was changed.")
+    except (review.ReviewError, sqlite3.Error, OSError) as error:
+        return Understanding(False, _failed_outcome(error).message)
+
+
+def change_priorities(
+    run_id: str, satisfaction: int, criterion_id: int, round_no: int, typed_need: str = "", actor: str = REVIEWER,
+    *, reading: str = "", proposed_id: int | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> ReviewOutcome:
+    """The person is not satisfied (1 to 3) and said what with: this criterion counts for more in THIS run (spec 11.2: +10 points,
+    at most 60, the others scaled so the total stays 100), every supplier is ranked again from the AI's saved marks, and the
+    industry score is worked out again with the new weights. Nothing is sent to the AI.
+
+    `typed_need` is what the person wrote after "None of the above" (empty when they picked an option); `reading` and `proposed_id`
+    are what the AI proposed and the person confirmed or changed. `round_no` is the question being answered (1 or 2): a second click or
+    an old page is refused. Everything is written in one go: the run's new weights, the new ranking, the decision (with the old and
+    new weights and winner) and the audit rows. The marks, the attempts and the original ranking are never touched."""
+    who = actor or REVIEWER
+    try:
+        score = reweight.check_satisfaction(satisfaction)
+        if reweight.is_satisfied(score):
+            raise review.ReviewError(f"A satisfaction of {reweight.SATISFIED_AT} or higher means you are satisfied, so the priorities "
+                                     "stay as they are. Accept the recommendation instead.")
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id)
+            benchmarks = repository.list_benchmarks(conn, state.run.template_id)
+            if reweight.rounds_left(state.feedback) <= 0:
+                raise review.ReviewError(ROUNDS_USED_TEXT)
+            _check_round(state, round_no)
+            criterion = state.criterion(criterion_id)
+            plan = reweight.plan_reweight(state.criteria, criterion_id)
+            terms = _terms_of(state.run, "the industry score cannot be worked out again with the new priorities")
+            new_weights = plan.new_weights()
+            new_criteria = tuple(replace(c, weight=new_weights[c.criterion_id]) for c in state.criteria)
+            ranking_weights = [ranking.CriterionWeight(c.criterion_id, c.weight, c.max_score) for c in new_criteria]
+
+            old_results = {n: s.result for n, s in state.suppliers.items()}
+            old_ranked = _rank_inputs(state, old_results)
+            results: dict[str, dict[str, Any]] = {}
+            industry_scores: dict[str, float] = {}
+            for name, stored in state.suppliers.items():
+                result = copy.deepcopy(dict(stored.result))
+                facts = result.get("extracted_facts")
+                graded = industry.industry_score(facts if isinstance(facts, dict) else None, benchmarks, new_criteria, terms)
+                result.update(industry_score=graded.score, industry_breakdown=_breakdown(graded))
+                results[name], industry_scores[name] = result, graded.score
+            ranked = _rank_inputs(state, results, ranking_weights)
+            new_results = review.apply_ranking(results, ranked, old_ranked.warnings)
+            eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
+            before, after = _board(state.suppliers), review.standings(ranked, eligible)
+            recommended_before, recommended_after = review.recommended_of(before), review.recommended_of(after)
+
+            need = reweight.clean_need(typed_need)
+            option = next(o.label for o in reweight.options_for(state.criteria) if o.criterion_id == criterion_id)
+            weights = [{"criterion_id": line.criterion_id, "name": line.name, "was": line.was, "now": line.now} for line in plan.lines]
+            snapshot = [{**item, "weight": new_weights[int(item["criterion_id"])]} for item in state.run.criteria_snapshot]
+            created = _iso(now())
+            repository.update_run_weights(conn, run_id, json.dumps(snapshot))
+            repository.add_feedback(
+                conn, run_id, action=repository.ACTION_REWEIGHT, created_at=created, criterion_id=criterion_id, rating=score,
+                comment=need or option,
+                details={"round": round_no, "satisfaction": score, "how": "typed" if need else "option", "option": option,
+                         "typed": need, "reading": reweight.clean_need(reading), "proposed_criterion_id": proposed_id,
+                         "criterion": criterion.name, "weights": weights, "before": before, "after": after,
+                         "recommended_before": recommended_before, "recommended_after": recommended_after, "by": who})
+            _save_ranking(conn, run_id, state, ranked, new_results, eligible, industry_scores)
+            audit.log_event(conn, run_id, who, "priorities_changed", {
+                "round": round_no, "satisfaction": score, "criterion_id": criterion_id, "criterion": criterion.name,
+                "reason": need or option, "how": "typed" if need else "option", "weights": weights,
+                "recommended_before": recommended_before, "recommended_after": recommended_after})
+            _log_ranking(conn, run_id, ranked, f"{criterion.name} counts for more (round {round_no})")
+        return ReviewOutcome(True, f"{reweight.describe_reweighting(plan)} {review.describe_recommendation(recommended_before, recommended_after)}")
+    except (review.ReviewError, sqlite3.Error, OSError) as error:
+        return _failed_outcome(error)
+
+
+def accept_recommendation(
+    run_id: str, satisfaction: int, round_no: int, actor: str = REVIEWER,
+    *, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> ReviewOutcome:
+    """The person accepts the recommendation and the run becomes final (spec 11.2). Satisfied (4 or 5) is the normal way. A person
+    who is not satisfied can accept only after all the rounds of changing the priorities have been used ("accept it anyway"): until
+    then they are asked what they are not satisfied with. With no eligible supplier there is nothing to accept."""
+    who = actor or REVIEWER
+    try:
+        score = reweight.check_satisfaction(satisfaction)
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id)
+            satisfied = reweight.is_satisfied(score)
+            if not satisfied and reweight.rounds_left(state.feedback) > 0:
+                raise review.ReviewError("You are not satisfied yet, so say what you are not satisfied with first.")
+            _check_round(state, round_no)
+            board = _board(state.suppliers)
+            chosen = review.recommended_of(board)
+            if chosen is None:
+                raise review.ReviewError("No supplier meets every must-have, so there is no recommendation to accept.")
+            details = {"satisfaction": score, "recommended": chosen, "board": board, "weights": _weights_as_data(state.criteria),
+                       "rounds_used": reweight.rounds_used(state.feedback), "accepted_anyway": not satisfied, "by": who}
+            repository.add_feedback(conn, run_id, action=repository.ACTION_ACCEPT, created_at=_iso(now()), supplier_name=chosen,
+                                    rating=score, details=details)
+            repository.set_run_status(conn, run_id, repository.RUN_FINAL)
+            audit.log_event(conn, run_id, who, "recommendation_accepted", {
+                "supplier": chosen, "satisfaction": score, "accepted_anyway": not satisfied,
+                "rounds_used": details["rounds_used"]})
+        return ReviewOutcome(True, f"You accepted {chosen}. This evaluation is now final.")
+    except (review.ReviewError, sqlite3.Error, OSError) as error:
+        return _failed_outcome(error)

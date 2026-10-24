@@ -706,6 +706,8 @@ def test_the_orchestrator_module_has_no_ui_provider_or_print_code():
         elif isinstance(node, ast.ImportFrom):
             top_level.add((node.module or "").split(".")[0])
     assert top_level <= {"__future__", "json", "os", "pathlib", "re", "secrets", "time", "traceback", "collections", "dataclasses", "datetime", "typing",
+                         "sqlite3",   # only to catch the database's own errors in the review steps (F13)
+                         "copy",      # a deep copy of a saved result before its industry score is worked out again (F13)
                          "agents", "db", "llm", "tools"}
     called = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not called & {"print", "open", "eval", "exec", "input"}

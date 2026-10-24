@@ -324,6 +324,9 @@ def list_models(
 
 # ---------------------------------------------------------------- one chat call
 
+MIN_KEY_CHARS_CHECKED = 8       # see LLMSettings.key_is_in
+
+
 @dataclass(frozen=True)
 class LLMSettings:
     """What the sidebar hands to every call. The key is left out of repr, so printing this never shows it."""
@@ -337,6 +340,12 @@ class LLMSettings:
     @property
     def litellm_model(self) -> str:
         return f"{provider_named(self.provider).litellm_prefix}/{self.model}"
+
+    def key_is_in(self, text: str) -> bool:
+        """True when `text` contains the key itself, as when a person pastes it into a box by mistake. Only this module looks at the
+        key; callers just ask. A key shorter than MIN_KEY_CHARS_CHECKED is not looked for: it would match ordinary words."""
+        key = self.api_key.strip()
+        return len(key) >= MIN_KEY_CHARS_CHECKED and key in (text or "")
 
 
 @dataclass(frozen=True)

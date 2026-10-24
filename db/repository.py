@@ -193,6 +193,7 @@ RUN_RUNNING = "Running"
 RUN_EVALUATED = "Evaluated"
 RUN_FAILED = "Failed"
 RUN_INTERRUPTED = "Interrupted"
+RUN_FINAL = "Final"                  # the reviewer accepted the recommendation (F13): no more changes
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,14 @@ def create_run(
 
 def set_run_status(conn: sqlite3.Connection, run_id: str, status: str) -> None:
     conn.execute("UPDATE rfp_runs SET status = ? WHERE rfp_run_id = ?", (status, run_id))
+
+
+def update_run_weights(conn: sqlite3.Connection, run_id: str, criteria_snapshot_json: str) -> None:
+    """Save the weights this run now ranks with (F13: the person was not satisfied and a criterion counts for more). Only this
+    run changes, never the marking scheme in Setup. What the weights were before stays in `reviewer_feedback` and the audit log."""
+    cursor = conn.execute("UPDATE rfp_runs SET criteria_snapshot_json = ? WHERE rfp_run_id = ?", (criteria_snapshot_json, run_id))
+    if cursor.rowcount != 1:
+        raise sqlite3.DatabaseError(f"No run {run_id} to change.")
 
 
 def finish_run(
@@ -372,3 +381,146 @@ def list_supplier_results(conn: sqlite3.Connection, run_id: str) -> list[StoredS
                "gates_passed": bool(values["gates_passed"])},
             result=result if isinstance(result, dict) else {}))
     return suppliers
+
+
+# ---------------------------------------------------------------- review: satisfaction, priorities, re-evaluations (F13)
+
+ACTION_RE_EVALUATE = "re_evaluate"   # the AI read one supplier again, with a comment
+ACTION_REWEIGHT = "reweight"         # the person was not satisfied: one criterion counts for more in this run
+ACTION_ACCEPT = "accept"             # the person was satisfied and accepted the recommendation (the run becomes final)
+
+
+@dataclass(frozen=True)
+class FeedbackRow:
+    """One row of `reviewer_feedback`, with `details_json` opened up into `details` (empty if it cannot be read)."""
+
+    id: int
+    supplier_name: str | None
+    criterion_id: int | None
+    attempt_no: int | None
+    rating: int | None
+    comment: str
+    action: str
+    override_score: float | None
+    details: dict[str, Any]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class AttemptRecord:
+    """One criterion of one stored evaluation attempt (the first evaluation is attempt 1)."""
+
+    supplier_name: str
+    attempt_no: int
+    criterion_id: int
+    score: float
+    justification: str
+    evidence: str
+    evidence_found: bool | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class DocumentRecord:
+    supplier_name: str
+    file_name: str
+    sha256: str
+    pages: int
+
+
+def add_feedback(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    action: str,
+    created_at: str,
+    supplier_name: str | None = None,
+    criterion_id: int | None = None,
+    attempt_no: int | None = None,
+    rating: int | None = None,
+    comment: str = "",
+    override_score: float | None = None,
+    details: dict[str, Any] | None = None,
+) -> int:
+    """Store one reviewer action and return its id. Rows are only ever added: the table refuses UPDATE and DELETE."""
+    cursor = conn.execute(
+        "INSERT INTO reviewer_feedback (rfp_run_id, supplier_name, criterion_id, attempt_no, rating, comment, action, "
+        "override_score, details_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, supplier_name, criterion_id, attempt_no, rating, comment, action, override_score,
+         json.dumps(details or {}, sort_keys=True, default=str), created_at),
+    )
+    return int(cursor.lastrowid)
+
+
+def list_feedback(conn: sqlite3.Connection, run_id: str) -> list[FeedbackRow]:
+    """Every reviewer action of a run, oldest first."""
+    rows = conn.execute(
+        "SELECT id, supplier_name, criterion_id, attempt_no, rating, comment, action, override_score, details_json, "
+        "created_at FROM reviewer_feedback WHERE rfp_run_id = ? ORDER BY id",
+        (run_id,),
+    ).fetchall()
+    found: list[FeedbackRow] = []
+    for row in rows:
+        values = dict(row)
+        details = _json_object(values.pop("details_json"))
+        found.append(FeedbackRow(**values, details=details if isinstance(details, dict) else {}))
+    return found
+
+
+def list_attempts(conn: sqlite3.Connection, run_id: str) -> list[AttemptRecord]:
+    """Every stored criterion result of every attempt of a run, by supplier, attempt and criterion."""
+    rows = conn.execute(
+        "SELECT supplier_name, attempt_no, criterion_id, score, justification, evidence, evidence_found, created_at "
+        "FROM evaluation_attempts WHERE rfp_run_id = ? ORDER BY supplier_name, attempt_no, criterion_id",
+        (run_id,),
+    ).fetchall()
+    return [AttemptRecord(**{**dict(row), "evidence_found": None if row["evidence_found"] is None else bool(row["evidence_found"])})
+            for row in rows]
+
+
+def current_attempt_no(conn: sqlite3.Connection, run_id: str, supplier_name: str) -> int:
+    """The number of the latest stored attempt for a supplier (0 when it has none)."""
+    row = conn.execute(
+        "SELECT MAX(attempt_no) FROM evaluation_attempts WHERE rfp_run_id = ? AND supplier_name = ?", (run_id, supplier_name)
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def list_documents(conn: sqlite3.Connection, run_id: str) -> list[DocumentRecord]:
+    rows = conn.execute(
+        "SELECT supplier_name, file_name, sha256, pages FROM run_documents WHERE rfp_run_id = ? ORDER BY id", (run_id,)
+    ).fetchall()
+    return [DocumentRecord(**dict(row)) for row in rows]
+
+
+def update_supplier_result(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    supplier_name: str,
+    absolute_score: float,
+    ppi: float,
+    industry_score: float,
+    final_rank: int,
+    gates_passed: bool,
+    result_json: str,
+) -> None:
+    """Bring a supplier's row up to date after a re-evaluation, an override or a re-ranking. The row is the CURRENT
+    result; what it used to say stays in `evaluation_attempts`, `reviewer_feedback` and the audit log."""
+    cursor = conn.execute(
+        "UPDATE supplier_results SET absolute_score = ?, ppi = ?, industry_score = ?, final_rank = ?, gates_passed = ?, "
+        "result_json = ? WHERE rfp_run_id = ? AND supplier_name = ?",
+        (absolute_score, ppi, industry_score, final_rank, int(gates_passed), result_json, run_id, supplier_name),
+    )
+    if cursor.rowcount != 1:
+        raise sqlite3.DatabaseError(f"No saved result for {supplier_name} in {run_id}.")
+
+
+def add_to_run_totals(conn: sqlite3.Connection, run_id: str, tokens: int | None, cost_usd: float | None) -> None:
+    """Add the tokens and cost of a later AI call (a re-evaluation) to the run's totals. Unknown stays unknown."""
+    conn.execute(
+        "UPDATE rfp_runs SET total_tokens = CASE WHEN ? IS NULL THEN total_tokens ELSE COALESCE(total_tokens, 0) + ? END, "
+        "total_cost_usd = CASE WHEN ? IS NULL THEN total_cost_usd ELSE COALESCE(total_cost_usd, 0) + ? END "
+        "WHERE rfp_run_id = ?",
+        (tokens, tokens, cost_usd, cost_usd, run_id),
+    )
