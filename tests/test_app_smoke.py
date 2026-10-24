@@ -7,14 +7,14 @@ from streamlit.testing.v1 import AppTest
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 EXPECTED_TABS = [
-    "Setup",
-    "New evaluation",
-    "Overview",
-    "Scorecards",
-    "Analysis",
-    "Re-evaluation",
-    "Ask the RFP",
-    "Audit",
+    "\U0001F39A\ufe0f Criteria",
+    "\U0001F680 New evaluation",
+    "\U0001F9ED Overview",
+    "\U0001F9EE Scorecards",
+    "\U0001F9EA Analysis",
+    "\u267B\ufe0f Re-evaluation",
+    "\U0001F50E Ask the RFP",
+    "\U0001F4DC Audit",
 ]
 
 

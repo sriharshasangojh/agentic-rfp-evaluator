@@ -103,7 +103,7 @@ def test_the_box_is_one_closed_expander_with_a_tick_per_criterion_a_writing_box_
     assert texts(page, "text_area") == [tab.PRIORITIES_WRITE_LABEL] and page.buttons["ne_prio_read"]["label"] == "Understand what I wrote"
     assert request == orchestrator.PriorityRequest((), ())
     assert tab.PRIORITIES_INTRO in texts(page, "caption")
-    assert "Nothing ticked: every criterion keeps the weight set up in Setup." in texts(page, "caption")
+    assert "Nothing ticked: every criterion keeps the weight set on the Criteria tab." in texts(page, "caption")
 
 
 def test_ticks_become_the_request_in_marking_scheme_order_and_the_new_weights_are_shown(page):

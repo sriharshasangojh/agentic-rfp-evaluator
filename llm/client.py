@@ -191,26 +191,27 @@ class Provider:
     headers: Callable[[str], dict[str, str]]    # request headers for a key
     parse: Callable[[Any], Page]
     params: tuple[tuple[str, str], ...] = ()    # query parameters sent on every page
+    key_url: str = ""                           # the page where a person gets a key (a plain link; nothing is sent there)
 
 
 PROVIDERS: tuple[Provider, ...] = (
     Provider("OpenAI", "openai", "https://api.openai.com/v1/models",
-             ("OPENAI_API_KEY",), _bearer, _parse_openai),
+             ("OPENAI_API_KEY",), _bearer, _parse_openai, key_url="https://platform.openai.com/api-keys"),
     Provider("Anthropic", "anthropic", "https://api.anthropic.com/v1/models",
              ("ANTHROPIC_API_KEY",),
              lambda key: {**_bearer(key), "anthropic-version": ANTHROPIC_VERSION},
-             _parse_anthropic, (("limit", "1000"),)),
+             _parse_anthropic, (("limit", "1000"),), key_url="https://console.anthropic.com/settings/keys"),
     Provider("Google Gemini", "gemini", "https://generativelanguage.googleapis.com/v1beta/models",
              ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
              lambda key: {"x-goog-api-key": key, "Accept": "application/json"},   # header, so the key is never in the address
-             _parse_gemini, (("pageSize", "1000"),)),
+             _parse_gemini, (("pageSize", "1000"),), key_url="https://aistudio.google.com/app/apikey"),
     Provider("Cohere", "cohere_chat", "https://api.cohere.com/v1/models",
              ("COHERE_API_KEY",), _bearer, _parse_cohere,
-             (("endpoint", "chat"), ("page_size", "1000"))),
+             (("endpoint", "chat"), ("page_size", "1000")), key_url="https://dashboard.cohere.com/api-keys"),
     Provider("xAI Grok", "xai", "https://api.x.ai/v1/language-models",
-             ("XAI_API_KEY",), _bearer, _parse_xai),
+             ("XAI_API_KEY",), _bearer, _parse_xai, key_url="https://console.x.ai"),
     Provider("DeepSeek", "deepseek", "https://api.deepseek.com/models",
-             ("DEEPSEEK_API_KEY",), _bearer, _parse_deepseek),
+             ("DEEPSEEK_API_KEY",), _bearer, _parse_deepseek, key_url="https://platform.deepseek.com/api_keys"),
 )
 PROVIDER_NAMES: tuple[str, ...] = tuple(p.name for p in PROVIDERS)
 

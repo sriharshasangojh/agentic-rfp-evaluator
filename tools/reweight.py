@@ -260,7 +260,7 @@ def describe_priorities(plan: PriorityPlan) -> str:
     if plan.everything_ticked:
         return "Everything is ticked, so nothing counts for more than anything else. The weights stay as they are."
     if not plan.changed:
-        return "Nothing ticked: every criterion keeps the weight set up in Setup." if not plan.skipped else (
+        return "Nothing ticked: every criterion keeps the weight set on the Criteria tab." if not plan.skipped else (
             f"{', '.join(plan.skipped)} already counts for as much as it can, so the weights stay as they are.")
     parts = [f"{line.name} {percent(line.was)}% to {percent(line.now)}%" for line in plan.lines if line.was != line.now]
     text = "With your priorities, for this run only: " + "; ".join(parts) + "."

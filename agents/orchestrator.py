@@ -184,11 +184,11 @@ def check_inputs(proposals: Sequence[Proposal], criteria: Sequence[repository.Cr
             errors.append(f"The supplier name '{group[0].supplier_name.strip()}' is used for {len(group)} files ({files}). Each supplier needs its own name.")
 
     if not criteria:
-        errors.append("There are no active criteria. Turn at least one on in Setup before evaluating.")
+        errors.append("There are no active criteria. Turn at least one on on the Criteria tab before evaluating.")
     else:
         total = repository.weights_total(criteria)
         if not repository.weights_are_valid(total):
-            errors.append(f"The active criteria weights total {total:g}, not {repository.WEIGHT_TOTAL:g}. Fix them in Setup before evaluating.")
+            errors.append(f"The active criteria weights total {total:g}, not {repository.WEIGHT_TOTAL:g}. Fix them on the Criteria tab before evaluating.")
     return InputCheck(tuple(errors), tuple(notes))
 
 
@@ -439,7 +439,7 @@ def run_evaluation(
     if not check.ok:
         return RunResult("", BLOCKED, "The run was not started: " + check.errors[0], errors=check.errors)
 
-    # "Your priorities": the ticked criteria count for more in THIS run; the marking scheme in Setup is not changed (the AI's
+    # "Your priorities": the ticked criteria count for more in THIS run; the marking scheme in the Criteria tab is not changed (the AI's
     # marks do not depend on the weights, so the same marks are simply weighted differently).
     request = priorities or PriorityRequest()
     plan = reweight.plan_priorities(criteria, request.ticked)
@@ -744,7 +744,7 @@ def run_evaluation(
 
 @dataclass(frozen=True)
 class RunCriterion:
-    """A criterion as this RUN used it: its name, weight and maximum come from the run's snapshot, so a later change in Setup
+    """A criterion as this RUN used it: its name, weight and maximum come from the run's snapshot, so a later change on the Criteria tab
     does not alter an old run. Only the description (for the AI's prompt) is read from the marking scheme."""
 
     criterion_id: int
@@ -1319,7 +1319,7 @@ RETURNED_TEXT = ("You were not satisfied after all {n} rounds, so the final reco
 
 
 def _original_weights(conn: sqlite3.Connection, state: _ReviewState) -> list[ranking.CriterionWeight]:
-    """The weights before any of the person's changes: the marking scheme in Setup (the run's own weight for a criterion Setup lost)."""
+    """The weights before any of the person's changes: the marking scheme on the Criteria tab (the run's own weight for a criterion the Criteria tab lost)."""
     template = {c.criterion_id: c.weight for c in repository.list_criteria(conn, state.run.template_id)}
     return [ranking.CriterionWeight(c.criterion_id, template.get(c.criterion_id, c.weight), c.max_score) for c in state.criteria]
 

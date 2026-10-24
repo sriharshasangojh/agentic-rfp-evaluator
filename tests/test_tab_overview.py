@@ -800,7 +800,9 @@ def headings(page: _Page) -> list[str]:
 def test_the_page_order_is_banner_budget_must_haves_strength_cards_then_details():
     page = drawn(supplier("Apex", 1, total=WITHIN, result=seeded()), supplier("Nexa", 2, result=seeded()))
     assert page.calls[0][1].startswith("<style>") and "ov-banner" in page.calls[0][1]
-    assert "Budget for this run: Rs 60 lakh for 100 laptops" in page.calls[1][1]
+    assert "ov-tiles" in page.calls[1][1] and "BEST PICK" in page.calls[1][1]
+    assert "ov-ranked" in page.calls[2][1] and ">Ranking<" in page.calls[2][1]
+    assert "Budget for this run: Rs 60 lakh for 100 laptops" in page.calls[3][1]
     assert headings(page) == ["#### Must-haves", "#### Price against budget", "#### Strength by criterion", "#### Why the top three", "#### Leaderboard"]
     marks = [text for kind, text in page.calls if (kind == "markdown" and text.startswith("####")) or kind == "expander"]
     assert marks == ["#### Must-haves", "#### Price against budget", "#### Strength by criterion", "#### Why the top three", tab_overview.DETAILS_LABEL, "#### Leaderboard"]

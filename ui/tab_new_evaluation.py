@@ -44,7 +44,7 @@ TOO_FEW_KEY = "ne_too_few"          # set when the button was pressed with fewer
 TOO_FEW_TEXT = "Please add a minimum of 2 PDFs to compare and evaluate."
 NO_NAME_TEXT = "Please enter the reviewer name in the sidebar before evaluating. It is saved with every decision in the audit trail."
 OBJECTIVE_NOTE = ("Priorities are optional. For an objective best-fit evaluation, leave them empty: the suppliers are then ranked "
-                  "only on the default weights set up in Setup.")
+                  "only on the default weights set on the Criteria tab.")
 READ_ONLY_KEY = "read_only_run_id"   # set when a past run was opened from the Audit history: that run is only looked at, not changed (F21)
 SHOWN_RUN_KEY = "shown_run_id"     # the finished run that the Overview (and later the Scorecards and Audit tabs) show
 REQUEST_KEY = "ne_run_requested"   # set by the button; the next redraw of this tab runs the batch (and clears it at once)
@@ -102,7 +102,7 @@ def _purchase_terms(disabled: bool) -> industry.PurchaseTerms | None:
 
 PRIORITIES_LABEL = "Your priorities (optional)"
 PRIORITIES_INTRO = ("Tick what matters more to you in this purchase. Each tick adds 10 points to that criterion's weight (at most 60) "
-                    "and the others shrink so the total stays 100. It applies to this evaluation only; Setup is not changed.")
+                    "and the others shrink so the total stays 100. It applies to this evaluation only; the Criteria tab is not changed.")
 PRIORITIES_WRITE_LABEL = "Or tell us in your own words"
 PRIORITIES_WRITE_HELP = ("For example: I want laptops that last a full working day. The AI reads it and says which criterion it "
                          "understood; nothing changes until you confirm.")

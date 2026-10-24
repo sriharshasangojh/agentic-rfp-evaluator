@@ -81,13 +81,16 @@ def get_llm_settings() -> client.LLMSettings | None:
 def render_sidebar() -> None:
     """Draw the sidebar as two grouped cards, in the order given by the spec (section 13.2)."""
     with st.sidebar:
-        st.header("Settings")
+        st.header("\u2699\ufe0f Settings")
         with st.container(key="side_llm"):
             st.subheader("LLM")
             provider = st.selectbox("Provider", client.PROVIDER_NAMES, key=PROVIDER_KEY)
             typed_key = st.text_input(
                 "API key", type="password", key=API_KEY_KEY,
                 help="Kept only in this browser session. It is never saved to a file or the database, and never shown.")
+            link = client.provider_named(provider).key_url
+            if link:
+                st.markdown(f"Don't have a key? [Get a key \u2197]({link})")
             key = _effective_key(provider)
             if key and not (typed_key or "").strip():
                 st.caption("Using the key set up for this app. Type your own key above to use that instead.")

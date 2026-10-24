@@ -23,7 +23,7 @@ def test_readme_has_every_section_19_topic():
 
 
 def test_readme_names_each_of_the_eight_tabs_in_order():
-    labels = ["Setup", "New evaluation", "Overview", "Scorecards", "Analysis", "Re-evaluation", "Ask the RFP", "Audit"]
+    labels = ["Criteria", "New evaluation", "Overview", "Scorecards", "Analysis", "Re-evaluation", "Ask the RFP", "Audit"]
     positions = [README.index(f"| {label} |") for label in labels]
     assert positions == sorted(positions) and len(labels) == 8
 

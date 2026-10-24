@@ -34,7 +34,7 @@ runs on Linux. If OneDrive locks a file, wait a few seconds and retry.
 
 | Tab | What it is for |
 |---|---|
-| Setup | The criteria, weights (must total 100), must-have gates and industry baselines, read from SQLite. Deactivating a criterion changes the prompt. |
+| Criteria | The criteria, weights (must total 100), must-have gates and industry baselines, read from SQLite. Deactivating a criterion changes the prompt. |
 | New evaluation | Upload 2–10 PDFs, name them, set the budget and quantity, optionally tick or write your priorities, choose the model and run. A step log shows progress. |
 | Overview | The recommendation, leaderboard with tie-break notes, strength table, price against budget, and (when you asked for something) the pick for your priorities beside the best fit. |
 | Scorecards | One supplier at a time: marks, evidence quotes, failed gates, missing items and warnings. |
@@ -163,4 +163,4 @@ an offline run with a scripted test model (`provider: OpenAI`, `model: test-mode
 
 Embedding or hybrid retrieval for 50+ suppliers with 100-page proposals · 3-year total cost of ownership · market price benchmarks ·
 multi-reviewer voting · user login · a hosted database for permanent audit history · side-by-side run comparison · editable baselines and
-must-have gates in Setup · formula-based price scoring beyond the cheapest/dearest request.
+must-have gates on the Criteria tab · formula-based price scoring beyond the cheapest/dearest request.

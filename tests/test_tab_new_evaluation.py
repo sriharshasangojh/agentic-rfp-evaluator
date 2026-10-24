@@ -353,7 +353,7 @@ def test_the_priorities_box_has_a_tick_for_each_criterion_and_says_nothing_chang
     app = start()
     assert not app.exception
     assert [tab(app).checkbox(key=f"ne_prio_{i}").value for i in range(1, 6)] == [False] * 5
-    assert "Nothing ticked: every criterion keeps the weight set up in Setup." in texts(tab(app), "caption")
+    assert "Nothing ticked: every criterion keeps the weight set on the Criteria tab." in texts(tab(app), "caption")
 
 
 def test_ticking_a_criterion_shows_the_new_weights_for_this_run_only():

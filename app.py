@@ -17,20 +17,21 @@ from ui import (
     tab_setup,
 )
 from ui.report import floating as floating_report
+from ui import hero
 from ui.sidebar import render_sidebar
 from ui.tab_new_evaluation import SHOWN_RUN_KEY
 from ui.theme import inject_theme_css
 
 # Exactly eight tabs, in this order (spec section 13.3). The sixth is called "Re-evaluation" at the user's request; the spec calls it "Review".
 TABS = (
-    ("Setup", tab_setup),
-    ("New evaluation", tab_new_evaluation),
-    ("Overview", tab_overview),
-    ("Scorecards", tab_scorecards),
-    ("Analysis", tab_analysis),
-    ("Re-evaluation", tab_review),
-    ("Ask the RFP", tab_ask),
-    ("Audit", tab_audit),
+    ("\U0001F39A\ufe0f Criteria", tab_setup),
+    ("\U0001F680 New evaluation", tab_new_evaluation),
+    ("\U0001F9ED Overview", tab_overview),
+    ("\U0001F9EE Scorecards", tab_scorecards),
+    ("\U0001F9EA Analysis", tab_analysis),
+    ("\u267B\ufe0f Re-evaluation", tab_review),
+    ("\U0001F50E Ask the RFP", tab_ask),
+    ("\U0001F4DC Audit", tab_audit),
 )
 
 
@@ -53,8 +54,7 @@ def main() -> None:
     render_sidebar()
 
     with st.container(key="hero"):
-        st.title("Agentic RFP Evaluation and Supplier Ranking")
-        st.caption("Meridian Analytics Pvt. Ltd. · RFP MA-RFP-2026-017 · 100 business laptops")
+        hero.show(st)
 
     streamlit_tabs = st.tabs([label for label, _ in TABS])
     for index, (streamlit_tab, (_, module)) in enumerate(zip(streamlit_tabs, TABS)):

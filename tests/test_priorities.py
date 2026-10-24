@@ -109,7 +109,7 @@ def test_the_sentence_names_every_weight_that_changed_and_says_it_is_for_this_ru
     text = reweight.describe_priorities(reweight.plan_priorities(CRITERIA, [PRICE]))
     assert text == ("With your priorities, for this run only: Technical Capability 30% to 26.25%; Implementation Plan 20% to 17.5%; "
                     "Commercial Value 20% to 30%; Security & Compliance 20% to 17.5%; Support & Experience 10% to 8.75%.")
-    assert reweight.describe_priorities(reweight.plan_priorities(CRITERIA, [])) == "Nothing ticked: every criterion keeps the weight set up in Setup."
+    assert reweight.describe_priorities(reweight.plan_priorities(CRITERIA, [])) == "Nothing ticked: every criterion keeps the weight set on the Criteria tab."
 
 
 def test_every_seeded_criterion_has_a_plain_tick_label_and_others_show_their_name():

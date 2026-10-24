@@ -596,7 +596,7 @@ def feedback_rows() -> list[dict[str, Any]]:
 
 def test_the_tab_is_called_re_evaluation_in_the_app():
     source = APP_PATH.read_text(encoding="utf-8")
-    assert '("Re-evaluation", tab_review)' in source and '("Review"' not in source
+    assert 'Re-evaluation", tab_review)' in source and '("Review"' not in source
 
 
 def test_before_any_run_the_tab_explains_what_to_do(monkeypatch):

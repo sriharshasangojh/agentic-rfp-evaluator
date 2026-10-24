@@ -12,7 +12,7 @@ SAME_HEAD = "Based on your priorities and the best fit"
 REQUEST_HEAD = "Best pick based on your priorities"
 IDEAL_HEAD = "Best pick based on the best fit"
 NOTE = ("Your priorities change how much each area counts (and the price wish, if you made one). The best fit uses the original "
-        "weights set up in Setup and the AI's own marks. The ranking, scorecards and charts follow your priorities.")
+        "weights set on the Criteria tab and the AI's own marks. The ranking, scorecards and charts follow your priorities.")
 
 
 def _rank(rank: int | None, total: int) -> str:

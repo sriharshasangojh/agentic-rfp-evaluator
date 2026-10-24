@@ -53,44 +53,117 @@ TILE_BAD_BORDER = "#F1B8B8"      # the outline of a key-fact tile that is red-ti
 METER_EMPTY = "#7F9A96"          # an empty dot of the 5-dot meter on a scorecard (the shape differs from a filled dot too)
 
 
-def inject_theme_css() -> None:
-    """Style what Streamlit's theme config can't: headings, cards, the header and the tabs.
+GRADIENT_DEEP = "#0A3F3B"
+GRADIENT_MID = "#0B7A72"
+GRADIENT_LIGHT = "#2FA37F"
+GOLD = "#E9C46A"                 # accent: headings and the Validate button in the sidebar, the winner on the podium
+GOLD_SOFT = "#F3DA9B"
+GOLD_TINT = "#FBF1D6"            # verdict banner start
+SIDEBAR_GRADIENT = "linear-gradient(200deg, #0A3F3B 0%, #0B5A52 60%, #14705F 100%)"
+BUTTON_GRADIENT = "linear-gradient(120deg, #0B7A72, #2FA37F)"
+HERO_GRADIENT = "linear-gradient(115deg, #0A3F3B 0%, #0B7A72 62%, #2FA37F 100%)"
+TAB_ON_BACKGROUND = "#EAF5F0"
 
-    Cards are containers created with ``st.container(key=...)``: Streamlit gives them the CSS
-    class ``st-key-<key>``, so the keys "hero", "card_<n>" and "side_<name>" are styled here.
-    """
-    st.markdown(
-        f"""
+# The page background, "Spotlight": a soft white glow behind the content, a little colour in the four corners.
+def _glow(x: int, y: int, rgb: str, alpha: float) -> str:
+    return f"radial-gradient(900px 560px at {x}% {y}%, rgba({rgb}, {alpha}), transparent 70%)"
+
+
+SPOTLIGHT_BACKGROUND = ", ".join((
+    "radial-gradient(900px 620px at 58% 42%, rgba(255, 255, 255, 0.9), transparent 72%)",
+    _glow(20, 0, "47, 163, 127", 0.32), _glow(100, 5, "125, 196, 230", 0.34),
+    _glow(85, 100, "233, 196, 106", 0.30), _glow(15, 100, "20, 168, 158", 0.26)))
+
+
+def css() -> str:
+    """The whole stylesheet as text (kept apart from `st.markdown` so that a test can read it)."""
+    return f"""
 <style>
-/* Headings (Streamlit's own heading styles win unless this is !important) */
+/* Page: the Spotlight background stays put while the content scrolls */
+.stApp {{ background-color: #EDF6F2; background-image: {SPOTLIGHT_BACKGROUND}; background-repeat: no-repeat; background-attachment: fixed; }}
+[data-testid="stMain"], [data-testid="stHeader"] {{ background: transparent !important; }}
 .stApp h1, .stApp h2, .stApp h3, .stApp h4 {{ color: {HEADING} !important; }}
+.stApp h4 {{ margin-top: 0.6rem; }}
 
-/* Cards: header, tab content and sidebar groups */
-.st-key-hero, [class*="st-key-card_"], [class*="st-key-side_"] {{
-    background: {CARD_BACKGROUND};
-    border: 1px solid {BORDER};
-    border-radius: 0.75rem;
-    box-shadow: 0 1px 3px rgba(11, 79, 74, 0.08);
-    padding: 1.25rem 1.5rem;
+/* Header banner: deep teal to green with a faint diagonal texture and a four-step journey */
+.st-key-hero {{
+    background: {HERO_GRADIENT};
+    border: none; border-radius: 1.4rem; padding: 1.7rem 2rem; position: relative; overflow: hidden;
+    box-shadow: 0 14px 30px rgba(10, 63, 59, 0.25);
 }}
-.st-key-hero {{ border-left: 6px solid {TEAL}; }}
-.st-key-hero h1 {{ font-size: 1.9rem; line-height: 1.25; padding: 0; }}
-[class*="st-key-side_"] {{ padding: 1rem 1.1rem; }}
-[class*="st-key-side_"] h3 {{ font-size: 1.05rem; padding: 0 0 0.25rem 0; }}
+.st-key-hero::before {{ content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 2px, transparent 2px 18px); }}
+.st-key-hero > * {{ position: relative; }}
+.hero-scenario {{ color: rgba(255,255,255,0.75); font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 0.35rem; }}
+.hero-title {{ color: #FFFFFF; font-size: 2rem; font-weight: 800; line-height: 1.2; letter-spacing: -0.01em; margin-bottom: 0.3rem; }}
+.hero-sub {{ color: rgba(255,255,255,0.92); font-size: 1rem; max-width: 46rem; margin-bottom: 1.1rem; }}
+.hero-steps {{ display: flex; gap: 0.65rem; flex-wrap: wrap; }}
+.hero-step {{ flex: 1 1 9rem; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 0.9rem; padding: 0.6rem 0.9rem; color: #FFFFFF; font-size: 0.8rem; }}
+.hero-step b {{ display: block; font-size: 0.88rem; margin-top: 0.1rem; }}
+.hero-step.done {{ background: rgba(233,196,106,0.22); border-color: rgba(233,196,106,0.7); }}
+.hero-step.now {{ background: #FFFFFF; color: {GRADIENT_DEEP}; border-color: #FFFFFF; }}
 
-/* Info boxes get a soft teal outline */
-[data-testid="stAlertContainer"] {{ border: 1px solid rgba(20, 168, 158, 0.35); }}
+/* Cards: tab content and sidebar groups */
+[class*="st-key-card_"] {{
+    background: {CARD_BACKGROUND}; border: 1px solid #E1EEEA; border-radius: 1.2rem;
+    box-shadow: 0 6px 16px rgba(10, 63, 59, 0.07); padding: 1.4rem 1.6rem;
+}}
 
-/* Tabs: soft teal tint and a teal underline for the selected one */
-[data-testid="stTabs"] [role="tab"] {{ border-radius: 0.5rem 0.5rem 0 0; }}
-[data-testid="stTabs"] [role="tab"][data-selected] {{ background-color: {TAB_SELECTED_BACKGROUND} !important; }}
-[data-testid="stTabs"] [role="tab"][data-selected],
-[data-testid="stTabs"] [role="tab"][data-selected] * {{ color: {HEADING} !important; font-weight: 600; }}
-[data-testid="stTabs"] .react-aria-SelectionIndicator {{ background-color: {TEAL} !important; }}
+/* Sidebar: deep teal to green with gold headings */
+[data-testid="stSidebar"] {{ background: {SIDEBAR_GRADIENT} !important; border-right: none; }}
+[data-testid="stSidebar"] > div:first-child {{ background: transparent !important; }}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] h4 {{
+    color: {GOLD} !important; letter-spacing: 0.08em; }}
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"], [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{ color: #FFFFFF !important; }}
+[data-testid="stSidebar"] a {{ color: {GOLD_SOFT} !important; text-decoration: underline; }}
+[data-testid="stSidebar"] [data-testid="stAlertContainer"], [data-testid="stSidebar"] [data-testid="stAlertContainer"] * {{ color: #1F2937 !important; }}
+[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg {{ color: #FFFFFF; }}
+[class*="st-key-side_"] {{ background: transparent; border: none; box-shadow: none; padding: 0.2rem 0; }}
+[class*="st-key-side_"] h3 {{ font-size: 0.8rem; text-transform: uppercase; padding: 0 0 0.25rem 0; }}
+[data-testid="stSidebar"] .stButton button {{ background: {GOLD}; border: none; border-radius: 0.7rem; }}
+[data-testid="stSidebar"] .stButton button, [data-testid="stSidebar"] .stButton button * {{ color: {GRADIENT_DEEP} !important; font-weight: 800; }}
+[data-testid="stSidebar"] .stButton button:hover {{ background: {GOLD_SOFT}; }}
+/* Dropdown arrows, the show-password eye and help icons keep their shape but get no fill at all */
+[data-testid="stSidebar"] button:not(.stButton button), [data-testid="stSidebar"] [data-baseweb="select"] *:not(input),
+[data-testid="stSidebar"] [data-testid="stTextInput"] *:has(> svg), [data-testid="stSidebar"] [data-testid="stTooltipIcon"],
+[data-testid="stSidebar"] [data-testid="stTooltipIcon"] * {{ background-color: transparent !important; background-image: none !important; box-shadow: none !important; }}
+[data-testid="stSidebar"] [data-baseweb="select"] > div {{ background-color: #FFFFFF !important; }}
+[data-testid="stSidebar"] [data-baseweb="select"] svg, [data-testid="stSidebar"] [data-testid="stTextInput"] button svg {{ color: #4B5563 !important; fill: #4B5563 !important; }}
+[data-testid="stSidebar"] [data-testid="stTooltipIcon"] svg {{ color: #FFFFFF !important; fill: #FFFFFF !important; }}
+
+/* Info boxes */
+[data-testid="stAlertContainer"] {{ border: 1px solid rgba(20, 168, 158, 0.35); border-radius: 0.9rem; }}
+
+/* Main buttons: the same green gradient as the banner */
+.stApp [data-testid="stMain"] button[kind="primary"], .stApp [data-testid="stMain"] [data-testid="stBaseButton-primary"] {{
+    background: {BUTTON_GRADIENT}; border: none; border-radius: 0.8rem; font-weight: 700;
+    box-shadow: 0 6px 16px rgba(11, 122, 114, 0.3);
+}}
+.stApp [data-testid="stMain"] [data-testid="stBaseButton-secondary"] {{ border-radius: 0.8rem; border-color: #CFE3DE; }}
+
+/* Tabs: a white rounded bar; the selected tab is tinted, bold and underlined */
+[data-testid="stTabs"] [role="tablist"] {{
+    background: #FFFFFF; border: 1px solid #D5E7E1; border-radius: 1rem; padding: 0.4rem;
+    gap: 0.15rem; box-shadow: 0 4px 14px rgba(10, 63, 59, 0.07);
+}}
+[data-testid="stTabs"] [role="tab"] {{ border-radius: 0.7rem; padding: 0.5rem 0.8rem; }}
+[data-testid="stTabs"] [role="tab"][data-selected] {{ background: {TAB_ON_BACKGROUND} !important; box-shadow: inset 0 -3px 0 {GRADIENT_MID}; }}
+[data-testid="stTabs"] [role="tab"][data-selected], [data-testid="stTabs"] [role="tab"][data-selected] * {{ color: {GRADIENT_DEEP} !important; font-weight: 800; }}
+[data-testid="stTabs"] .react-aria-SelectionIndicator {{ display: none !important; }}
 [data-testid="stTabs"] [role="tab"][data-hovered]:not([data-selected]) {{ background-color: {TAB_HOVER_BACKGROUND} !important; }}
 [data-testid="stTabs"] [role="tab"][data-hovered]:not([data-selected]),
 [data-testid="stTabs"] [role="tab"][data-hovered]:not([data-selected]) * {{ color: {TEAL_TEXT} !important; }}
 </style>
-""",
-        unsafe_allow_html=True,
-    )
+"""
+
+
+def inject_theme_css() -> None:
+    """Style what Streamlit's theme config can't: the banner, cards, sidebar, buttons and tabs.
+
+    Cards are containers created with ``st.container(key=...)``: Streamlit gives them the CSS
+    class ``st-key-<key>``, so the keys "hero", "card_<n>" and "side_<name>" are styled here.
+    """
+    st.markdown(css(), unsafe_allow_html=True)

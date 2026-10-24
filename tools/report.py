@@ -174,8 +174,8 @@ def file_name(run_id: str, extension: str = "pdf") -> str:
     return f"rfp_report_{safe}.{extension}"
 
 
-HEADING, PRIMARY, TEAL, TEXT, BORDER, OVER, MINT = "#0B4F4A", "#0B7A72", "#14A89E", "#1F2937", "#C5DEDA", "#D81B60", "#D5ECE8"
-PIE_COLOURS = ("#0B7A72", "#14A89E", "#7CCBC4", "#F0A202", "#6C8EAD", "#B0BEC5", "#8E6C8A", "#C9ADA7")
+HEADING, PRIMARY, TEAL, TEXT, BORDER, OVER, MINT = "#0A3F3B", "#0B7A72", "#14A89E", "#1F2937", "#C5DEDA", "#D81B60", "#EAF5F0"
+PIE_COLOURS = ("#0B7A72", "#E9C46A", "#14A89E", "#7CCBC4", "#6C8EAD", "#B0BEC5", "#8E6C8A", "#C9ADA7")
 
 
 def _clip(text: object, n: int = 14) -> str:
@@ -251,7 +251,9 @@ def _build_pdf(export: Mapping[str, Any], picks: Mapping[str, Any] | None, budge
     suppliers = [s for s in export.get("suppliers") or [] if isinstance(s, Mapping)]
     snapshot = [c for c in export.get("criteria_snapshot") or [] if isinstance(c, Mapping)]
     data = chart_data(export, budget_rs)
-    story: list[Any] = [P("RFP evaluation report", h1),
+    gold_rule = Table([[""]], colWidths=[170 * mm], rowHeights=[2.2 * mm])
+    gold_rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#E9C46A"))]))      # a gold band under the title
+    story: list[Any] = [P("RFP evaluation report", h1), gold_rule, Spacer(1, 3 * mm),
                         P(f"Run {export.get('rfp_run_id')} · {export.get('created_at')} · {export.get('provider')} / {export.get('model')} · "
                           f"status {export.get('status')}", small),
                         P("Recommendation", h2), bold(rec.get("recommended") or "No supplier meets every must-have")]

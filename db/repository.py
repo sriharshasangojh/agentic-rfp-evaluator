@@ -238,7 +238,7 @@ def set_run_status(conn: sqlite3.Connection, run_id: str, status: str) -> None:
 
 def update_run_weights(conn: sqlite3.Connection, run_id: str, criteria_snapshot_json: str) -> None:
     """Save the weights this run now ranks with (F13: the person was not satisfied and a criterion counts for more). Only this
-    run changes, never the marking scheme in Setup. What the weights were before stays in `reviewer_feedback` and the audit log."""
+    run changes, never the marking scheme on the Criteria tab. What the weights were before stays in `reviewer_feedback` and the audit log."""
     cursor = conn.execute("UPDATE rfp_runs SET criteria_snapshot_json = ? WHERE rfp_run_id = ?", (criteria_snapshot_json, run_id))
     if cursor.rowcount != 1:
         raise sqlite3.DatabaseError(f"No run {run_id} to change.")

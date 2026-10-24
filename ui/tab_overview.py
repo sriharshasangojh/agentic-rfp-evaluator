@@ -61,6 +61,7 @@ MAX_ATTRIBUTES_IN_PILL = 2
 ELIGIBLE_COLOURS = ("#2E7D32", "#E8F5E9")      # text, background (same pair as a Strong cell); the word is always printed
 NOT_ELIGIBLE_COLOURS = ("#C62828", "#FFEBEE")
 MUTED = "#4B5563"
+MUTED_TEXT = MUTED
 
 GOOD, WARN, BAD = "good", "warn", "bad"          # the tone of a pill or of the banner
 SYMBOLS = {GOOD: "\u2713", WARN: "\u26a0", BAD: "\u2717"}
@@ -69,6 +70,27 @@ TONE_EDGES = {GOOD: theme.EDGE_GOOD, WARN: theme.EDGE_WARN, BAD: theme.EDGE_BAD}
 
 # One line on purpose: Streamlit's markdown ends an HTML block at a blank line, so no line breaks inside the HTML.
 _CSS = (
+    ".ov-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:1rem;margin:0.5rem 0 1rem 0}"
+    ".ov-tile{display:flex;gap:0.8rem;align-items:center;background:#fff;border:1px solid #E1EEEA;border-radius:1.1rem;padding:0.9rem 1.1rem;box-shadow:0 6px 16px rgba(10,63,59,0.07)}"
+    ".ov-tile-ic{width:2.8rem;height:2.8rem;border-radius:0.9rem;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex:none}"
+    ".ov-tile-k{font-size:0.68rem;letter-spacing:0.1em;color:#5E7A75;font-weight:700}"
+    f".ov-tile-v{{font-size:1.5rem;font-weight:800;color:{theme.GRADIENT_DEEP};line-height:1.15}}.ov-tile-d{{font-size:0.78rem;color:#5E7A75}}"
+    ".ov-ranked{background:#fff;border:1px solid #E1EEEA;border-radius:1.2rem;padding:1.2rem 1.4rem;margin:0.5rem 0 1rem 0;box-shadow:0 6px 16px rgba(10,63,59,0.06)}"
+    f".ov-ranked-title{{font-weight:700;color:{theme.GRADIENT_DEEP};font-size:1.15rem}}.ov-ranked-sub{{color:{MUTED_TEXT};font-size:0.85rem;margin-bottom:0.9rem}}"
+    ".ov-podium{display:flex;align-items:flex-end;justify-content:center;gap:0.9rem;margin:0.4rem 0 0.8rem 0;flex-wrap:wrap}"
+    f".ov-rk{{flex:1 1 9rem;max-width:14rem;border-radius:1.1rem 1.1rem 0.5rem 0.5rem;text-align:center;padding:0.9rem 0.6rem;color:{theme.GRADIENT_DEEP};background:linear-gradient(180deg,#E8F1EE,#C9DDD6)}}"
+    ".ov-rk.p1{min-height:11.5rem;background:linear-gradient(180deg,#F6DF9B,#E9C46A);box-shadow:0 12px 24px rgba(233,196,106,0.45)}"
+    ".ov-rk.p2{min-height:9rem}.ov-rk.p3{min-height:7.5rem}"
+    f".ov-rk.out{{opacity:0.85}}.ov-rk-rank{{font-size:0.72rem;font-weight:800;letter-spacing:0.08em}}.ov-rk.out .ov-rk-rank{{color:{theme.PILL_BAD[0]}}}"
+    ".ov-rk-name{font-weight:800;margin:0.2rem 0;font-size:1rem}.ov-rk-score{font-size:1.9rem;font-weight:900}"
+    ".ov-row{display:flex;align-items:center;gap:0.9rem;padding:0.6rem 0.3rem;border-top:1px solid #E8F0ED;flex-wrap:wrap}"
+    f".ov-row-n{{width:1.9rem;height:1.9rem;border-radius:0.55rem;background:{theme.TAB_ON_BACKGROUND};font-weight:800;display:flex;align-items:center;justify-content:center;color:{theme.GRADIENT_DEEP}}}"
+    ".ov-row-name{flex:0 0 11rem;font-weight:700}.ov-row-bar{flex:1 1 8rem;height:10px;background:#E8F0ED;border-radius:5px}"
+    ".ov-row-bar i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,#14A89E,#3FB58A)}"
+    f".ov-row.out .ov-row-bar i{{background:#C9556F}}.ov-row-score{{font-weight:800;color:{theme.GRADIENT_DEEP};width:3.2rem;text-align:right}}"
+    ".ov-ppibar{display:flex;align-items:center;gap:0.5rem;justify-content:flex-end}"
+    ".ov-ppibar .bar{flex:1;min-width:3rem;height:8px;background:#E3F1EE;border-radius:4px}"
+    ".ov-ppibar .bar i{display:block;height:8px;border-radius:4px;background:linear-gradient(90deg,#14A89E,#3FB58A)}"
     ".ov-wrap{overflow-x:auto;margin:0.25rem 0 0.5rem 0}"
     f".ov-table{{width:100%;border-collapse:collapse;font-size:0.95rem;color:{theme.TEXT}}}"
     f".ov-table th{{background:{theme.TAB_SELECTED_BACKGROUND};color:{theme.HEADING};text-align:left;"
@@ -85,7 +107,7 @@ _CSS = (
     ".ov-weight{display:block;font-weight:400;font-size:0.75rem}"
     f".ov-why{{margin-left:0.4rem;font-size:0.85rem;color:{MUTED}}}"
     # verdict banner and its pills
-    f".ov-banner{{background:{theme.CARD_BACKGROUND};border:1px solid {theme.BORDER};border-left-width:8px;border-radius:0.75rem;"
+    f".ov-banner{{background:linear-gradient(100deg,{theme.GOLD_TINT},#EAF6EF);border:1px solid #EBDDB0;border-left-width:8px;border-radius:0.75rem;"
     "padding:0.9rem 1.2rem;margin:0.25rem 0 0.5rem 0;box-shadow:0 1px 3px rgba(11,79,74,0.08)}"
     f".ov-banner-head{{color:{theme.HEADING};font-size:1.55rem;font-weight:400;line-height:1.3}}"
     ".ov-banner-name{font-weight:700}"
@@ -508,7 +530,7 @@ def leaderboard_html(rows: tuple[Row, ...], recommended: str | None) -> str:
         body.append(
             f'<tr{highlight}>'
             f'<td>{row.rank}</td><td><strong>{_e(row.name)}</strong>{pill}</td>'
-            f'<td class="ov-num">{row.overall:.2f}</td><td class="ov-num">{row.ppi:.2f}</td><td class="ov-num">{row.industry:.2f}</td>'
+            f'<td class="ov-num">{row.overall:.2f}</td><td class="ov-num"><div class="ov-ppibar"><div class="bar"><i style="width:{_bar_width(row.ppi):.1f}%"></i></div>{row.ppi:.2f}</div></td><td class="ov-num">{row.industry:.2f}</td>'
             f'<td>{_e(row.submitted)}</td><td>{_e(row.experience)}</td><td>{_badge(row)}</td></tr>')
     return (f"<style>{_CSS}</style><div class=\"ov-wrap\"><table class=\"ov-table\"><thead><tr>{head}</tr></thead>"
             f"<tbody>{''.join(body)}</tbody></table></div>")
@@ -609,6 +631,54 @@ def card_html(row: Row, recommended: bool) -> str:
             f'{flag}<ul>{items}</ul></div>')
 
 
+def _bar_width(value: float) -> float:
+    return max(0.0, min(100.0, float(value)))
+
+
+def ranked_html(rows: tuple[Row, ...], recommended: str | None) -> str:
+    """"Ranking": a podium for the first three suppliers (the recommended one in gold) and a bar row for each of the others."""
+    if not rows:
+        return ""
+    podium = []
+    for row in rows[:3]:
+        classes = f"ov-rk p{min(row.rank, 3)}" + ("" if row.eligible else " out")
+        label = "#1 \u00b7 RECOMMENDED" if row.name == recommended else (f"#{row.rank}" if row.eligible else f"#{row.rank} \u00b7 NOT ELIGIBLE")
+        podium.append(f'<div class="{classes}"><div class="ov-rk-rank">{_e(label)}</div><div class="ov-rk-name">{_e(row.name)}</div>'
+                      f'<div class="ov-rk-score" title="{_title(PPI_HELP)}">{row.ppi:.1f}</div></div>')
+    if len(podium) == 3:
+        podium = [podium[1], podium[0], podium[2]]       # second, first, third: the winner stands in the middle
+    rest = "".join(
+        f'<div class="ov-row{"" if row.eligible else " out"}"><div class="ov-row-n">{row.rank}</div><div class="ov-row-name">{_e(row.name)}</div>'
+        f'<div class="ov-row-bar"><i style="width:{_bar_width(row.ppi):.1f}%"></i></div><div class="ov-row-score">{row.ppi:.1f}</div>{_badge(row)}</div>'
+        for row in rows[3:])
+    return (f'<style>{_CSS}</style><div class="ov-ranked"><div class="ov-ranked-title">Ranking</div>'
+            f'<div class="ov-ranked-sub">Score against the other bids ({_e(PPI_NAME)}), and whether each supplier meets every must-have.</div>'
+            f'<div class="ov-podium">{"".join(podium)}</div>{rest}</div>')
+
+
+def tiles_html(overview: Overview) -> str:
+    """Four key facts as tiles. The price tile says whether the pick fits the budget but never prints the budget itself."""
+    rows, best = overview.rows, overview.recommended or overview.top_ranked
+    if best is None:
+        return ""
+    price = best.price
+    if price.total_rs is None:
+        price_v, price_d = "Not stated", f"{best.name}"
+    else:
+        price_v = {True: "In budget", False: "Over budget", None: "No budget"}[price.within_budget]
+        price_d = f"{best.name} {insights.format_lakh(price.total_rs)}"
+    warnings = sum(1 for pill in overview.verdict.pills if pill.tone != GOOD)
+    eligible = sum(1 for row in rows if row.eligible)
+    tiles = (("\U0001F3C6", "#FBF1D6", "BEST PICK", _e(best.name.split()[0]), f"PPI {best.ppi:.2f}"),
+             ("\U0001F4B0", "#DDF3E4", "PRICE", _e(price_v), _e(price_d)),
+             ("\u2705", "#E3EEF8", "ELIGIBLE", f"{eligible} / {len(rows)}", "meet every must-have"),
+             ("\u26A0\ufe0f", "#F9E1E7", "WARNINGS", str(warnings), "see the banner above"))
+    body = "".join(f'<div class="ov-tile"><div class="ov-tile-ic" style="background:{bg}">{icon}</div><div>'
+                   f'<div class="ov-tile-k">{key}</div><div class="ov-tile-v">{value}</div><div class="ov-tile-d">{detail}</div></div></div>'
+                   for icon, bg, key, value, detail in tiles)
+    return f'<style>{_CSS}</style><div class="ov-tiles">{body}</div>'
+
+
 def cards_html(rows: tuple[Row, ...], recommended: str | None) -> str:
     """A card for each of ranks 1 to 3 (fewer when there are fewer suppliers)."""
     cards = "".join(card_html(row, row.name == recommended) for row in rows[:TOP_CARDS])
@@ -649,6 +719,8 @@ def _details(overview: Overview) -> None:
 def _show(overview: Overview) -> None:
     recommended_name = overview.recommended.name if overview.recommended else None
     st.markdown(verdict_html(overview.verdict), unsafe_allow_html=True)
+    st.markdown(tiles_html(overview), unsafe_allow_html=True)
+    st.markdown(ranked_html(overview.rows, recommended_name), unsafe_allow_html=True)
     if overview.budget_line:
         _small(overview.budget_line)
 

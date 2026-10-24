@@ -208,9 +208,9 @@ def test_all_problems_are_listed_together(criteria):
 def test_the_weights_must_total_100_and_a_criterion_must_be_active(criteria):
     heavy = [dataclasses.replace(c, weight=c.weight + (5 if c.criterion_id == 1 else 0)) for c in criteria]
     error = orchestrator.check_inputs([proposal("A"), proposal("B")], heavy).errors
-    assert error == ("The active criteria weights total 105, not 100. Fix them in Setup before evaluating.",)
+    assert error == ("The active criteria weights total 105, not 100. Fix them on the Criteria tab before evaluating.",)
     assert orchestrator.check_inputs([proposal("A"), proposal("B")], []).errors == (
-        "There are no active criteria. Turn at least one on in Setup before evaluating.",)
+        "There are no active criteria. Turn at least one on on the Criteria tab before evaluating.",)
 
 
 @needs_pdf_reader
