@@ -975,3 +975,17 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 279. **Reviewer name is required** before evaluating (sidebar label "Reviewer name (required)"). The Evaluate button can be clicked without a name or with fewer than 2 PDFs; it then shows a warning and runs nothing. The priorities box says it is optional and that an objective best-fit run needs none.
 280. **Negotiation layout.** After the click: the "Best fit" panel, a divider, then the heading "Negotiation points for <supplier>" with a one-line explanation and the numbered points.
 281. **Known differences from the build prompt (to state in the README).** 3 re-evaluation rounds (spec 2); "A score looks wrong" and "We don't want this supplier" are not offered; "Choose a supplier yourself" is replaced by the final pick plus negotiation; mixed-wish weights and the price wish are extensions.
+
+## Report (extension, after F21)
+
+- A "Report" section at the bottom of the Re-evaluation tab (once there is a recommendation): a PDF download and a "Write an email with the summary" link. No new tab and no new chart (still 8 tabs, 6 charts).
+- The report is built by pure functions in `tools/report.py` from the same data as the audit JSON plus the two picks (priorities and best fit). The PDF is made with PyMuPDF (already a dependency); if that fails the page offers an HTML version instead.
+- Email: the link opens the person's own mail app (`mailto:`) with a subject and a short summary; they attach the PDF themselves. Sending from the app was dropped on purpose (it would need a mail server, a password or a sender domain to protect).
+- No API key and no proposal text is in the report. `rapidfuzz` is now pinned (3.14.3) in `requirements.txt`; confirm it installs on your machine.
+- The PDF layout itself is only checked on a machine with PyMuPDF (that one test is skipped in the build workspace).
+
+## F22: README and sample run
+
+- README follows spec section 19 and lists every extension and known difference from the build prompt (3 rounds, price formula only on request, two picks, return to best fit, one negotiation supplier, report, buttons not offered).
+- `samples/sample_run.json` is produced by the app's own export function from an offline run with a scripted test model (`test-model`), so it shows the format with no key and no live data. Replace it after your live run if you want a real one.
+- `tests/test_docs.py` checks the README topics, that named files exist and that the sample has exactly the export keys.

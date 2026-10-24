@@ -1,0 +1,985 @@
+{
+  "rfp_run_id": "RUN-20261023-093000-502c",
+  "created_at": "2026-10-23T09:30:00+00:00",
+  "status": "Evaluated",
+  "provider": "OpenAI",
+  "model": "test-model",
+  "temperature": 0.0,
+  "template": "startup_laptops",
+  "criteria_snapshot": [
+    {
+      "criterion_id": 1,
+      "name": "Technical Capability",
+      "weight": 30.0,
+      "max_score": 10.0
+    },
+    {
+      "criterion_id": 2,
+      "name": "Implementation Plan",
+      "weight": 20.0,
+      "max_score": 10.0
+    },
+    {
+      "criterion_id": 3,
+      "name": "Commercial Value",
+      "weight": 20.0,
+      "max_score": 10.0
+    },
+    {
+      "criterion_id": 4,
+      "name": "Security & Compliance",
+      "weight": 20.0,
+      "max_score": 10.0
+    },
+    {
+      "criterion_id": 5,
+      "name": "Support & Experience",
+      "weight": 10.0,
+      "max_score": 10.0
+    }
+  ],
+  "suppliers": [
+    {
+      "rank": 1,
+      "supplier_name": "Apex Systems",
+      "submission_date": "2026-10-05",
+      "experience_rating": 4,
+      "absolute_score": 77.0,
+      "ppi": 86.94,
+      "industry_score": 51.25,
+      "eligible": true,
+      "gates": {
+        "warranty": "pass",
+        "certification": "pass",
+        "price_table": "pass",
+        "delivery": "pass"
+      },
+      "criteria": [
+        {
+          "criterion_id": 1,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 30.0,
+          "strength": "Strong",
+          "justification": "why 1",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 2,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 2",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 3,
+          "score": 5.0,
+          "max_score": 10.0,
+          "benchmark": 8.0,
+          "gap": -3.0,
+          "relative_pct": 62.5,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 3",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 4,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 20.0,
+          "strength": "Strong",
+          "justification": "why 4",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 5,
+          "score": 8.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -1.0,
+          "relative_pct": 88.89,
+          "weight": 10.0,
+          "strength": "Strong",
+          "justification": "why 5",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        }
+      ],
+      "extracted_facts": {
+        "laptop_model": null,
+        "processor": null,
+        "ram_gb": null,
+        "ssd_gb": null,
+        "battery_hours": 11.5,
+        "battery_measured": true,
+        "weight_kg": null,
+        "warranty_years": 3,
+        "warranty_type": "on-site",
+        "repair_time_days": null,
+        "replacement_within_24h": null,
+        "delivery_weeks": 6,
+        "grand_total_rs": null,
+        "unit_price_rs": 59000,
+        "price_table_present": true,
+        "bis_named": true,
+        "energy_rating_named": null,
+        "security_certification_named": null,
+        "data_wipe": null,
+        "encryption_before_delivery": null,
+        "price_lock_later_orders": null
+      },
+      "industry_breakdown": {
+        "score": 51.25,
+        "attributes": [
+          {
+            "attribute_key": "unit_price",
+            "label": "Unit price",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "Rs 59,000 per laptop (budget Rs 60,000 each)"
+          },
+          {
+            "attribute_key": "warranty",
+            "label": "Warranty",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 5.0,
+            "reason": "3 years, on-site"
+          },
+          {
+            "attribute_key": "repair_time",
+            "label": "Repair time",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 5.0,
+            "reason": "Repair time not stated"
+          },
+          {
+            "attribute_key": "battery",
+            "label": "Battery",
+            "grade": "Above",
+            "points": 100,
+            "weight": 15.0,
+            "reason": "11.5 h, measured"
+          },
+          {
+            "attribute_key": "memory_storage",
+            "label": "Memory and storage",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "RAM and SSD size not stated"
+          },
+          {
+            "attribute_key": "delivery",
+            "label": "Delivery",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "6 weeks"
+          },
+          {
+            "attribute_key": "certifications",
+            "label": "Certifications",
+            "grade": "Below",
+            "points": 25,
+            "weight": 10.0,
+            "reason": "BIS named"
+          },
+          {
+            "attribute_key": "data_wiping",
+            "label": "Data wiping",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "Data wiping not described"
+          }
+        ]
+      },
+      "pros": [
+        "Strong on Laptop specs (9/10, best of all bids)",
+        "Strong on Security (9/10, best of all bids)",
+        "Meets every must-have"
+      ],
+      "cons": [
+        "Weaker on Value for money (5/10; best bid 8/10)"
+      ],
+      "risks": [],
+      "warnings": [],
+      "document_sha256": "a6a386f5d11dc17d5624264e872deb46d1224a257fa09645ffe1bbd82dc83600"
+    },
+    {
+      "rank": 2,
+      "supplier_name": "NexaWorks",
+      "submission_date": "2026-10-06",
+      "experience_rating": 4,
+      "absolute_score": 76.0,
+      "ppi": 86.39,
+      "industry_score": 51.25,
+      "eligible": true,
+      "gates": {
+        "warranty": "pass",
+        "certification": "pass",
+        "price_table": "pass",
+        "delivery": "pass"
+      },
+      "criteria": [
+        {
+          "criterion_id": 1,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 30.0,
+          "strength": "Average",
+          "justification": "why 1",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 2,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 20.0,
+          "strength": "Strong",
+          "justification": "why 2",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 3,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 8.0,
+          "gap": -1.0,
+          "relative_pct": 87.5,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 3",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 4,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 4",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 5,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 10.0,
+          "strength": "Strong",
+          "justification": "why 5",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        }
+      ],
+      "extracted_facts": {
+        "laptop_model": null,
+        "processor": null,
+        "ram_gb": null,
+        "ssd_gb": null,
+        "battery_hours": 11.5,
+        "battery_measured": true,
+        "weight_kg": null,
+        "warranty_years": 3,
+        "warranty_type": "on-site",
+        "repair_time_days": null,
+        "replacement_within_24h": null,
+        "delivery_weeks": 6,
+        "grand_total_rs": null,
+        "unit_price_rs": 59000,
+        "price_table_present": true,
+        "bis_named": true,
+        "energy_rating_named": null,
+        "security_certification_named": null,
+        "data_wipe": null,
+        "encryption_before_delivery": null,
+        "price_lock_later_orders": null
+      },
+      "industry_breakdown": {
+        "score": 51.25,
+        "attributes": [
+          {
+            "attribute_key": "unit_price",
+            "label": "Unit price",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "Rs 59,000 per laptop (budget Rs 60,000 each)"
+          },
+          {
+            "attribute_key": "warranty",
+            "label": "Warranty",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 5.0,
+            "reason": "3 years, on-site"
+          },
+          {
+            "attribute_key": "repair_time",
+            "label": "Repair time",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 5.0,
+            "reason": "Repair time not stated"
+          },
+          {
+            "attribute_key": "battery",
+            "label": "Battery",
+            "grade": "Above",
+            "points": 100,
+            "weight": 15.0,
+            "reason": "11.5 h, measured"
+          },
+          {
+            "attribute_key": "memory_storage",
+            "label": "Memory and storage",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "RAM and SSD size not stated"
+          },
+          {
+            "attribute_key": "delivery",
+            "label": "Delivery",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "6 weeks"
+          },
+          {
+            "attribute_key": "certifications",
+            "label": "Certifications",
+            "grade": "Below",
+            "points": 25,
+            "weight": 10.0,
+            "reason": "BIS named"
+          },
+          {
+            "attribute_key": "data_wiping",
+            "label": "Data wiping",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "Data wiping not described"
+          }
+        ]
+      },
+      "pros": [
+        "Strong on Delivery plan (9/10, best of all bids)",
+        "Strong on Support (9/10, best of all bids)",
+        "Meets every must-have"
+      ],
+      "cons": [],
+      "risks": [],
+      "warnings": [],
+      "document_sha256": "89a448555aaf9beb2d22855ec21d1a7fff834bb0114e7de127c674825c807a61"
+    },
+    {
+      "rank": 3,
+      "supplier_name": "Horizon Datacom",
+      "submission_date": "2026-10-06",
+      "experience_rating": 3,
+      "absolute_score": 76.0,
+      "ppi": 86.39,
+      "industry_score": 51.25,
+      "eligible": true,
+      "gates": {
+        "warranty": "pass",
+        "certification": "pass",
+        "price_table": "pass",
+        "delivery": "pass"
+      },
+      "criteria": [
+        {
+          "criterion_id": 1,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 30.0,
+          "strength": "Average",
+          "justification": "why 1",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 2,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 20.0,
+          "strength": "Strong",
+          "justification": "why 2",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 3,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 8.0,
+          "gap": -1.0,
+          "relative_pct": 87.5,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 3",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 4,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 4",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 5,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 10.0,
+          "strength": "Strong",
+          "justification": "why 5",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        }
+      ],
+      "extracted_facts": {
+        "laptop_model": null,
+        "processor": null,
+        "ram_gb": null,
+        "ssd_gb": null,
+        "battery_hours": 11.5,
+        "battery_measured": true,
+        "weight_kg": null,
+        "warranty_years": 3,
+        "warranty_type": "on-site",
+        "repair_time_days": null,
+        "replacement_within_24h": null,
+        "delivery_weeks": 6,
+        "grand_total_rs": null,
+        "unit_price_rs": 59000,
+        "price_table_present": true,
+        "bis_named": true,
+        "energy_rating_named": null,
+        "security_certification_named": null,
+        "data_wipe": null,
+        "encryption_before_delivery": null,
+        "price_lock_later_orders": null
+      },
+      "industry_breakdown": {
+        "score": 51.25,
+        "attributes": [
+          {
+            "attribute_key": "unit_price",
+            "label": "Unit price",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "Rs 59,000 per laptop (budget Rs 60,000 each)"
+          },
+          {
+            "attribute_key": "warranty",
+            "label": "Warranty",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 5.0,
+            "reason": "3 years, on-site"
+          },
+          {
+            "attribute_key": "repair_time",
+            "label": "Repair time",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 5.0,
+            "reason": "Repair time not stated"
+          },
+          {
+            "attribute_key": "battery",
+            "label": "Battery",
+            "grade": "Above",
+            "points": 100,
+            "weight": 15.0,
+            "reason": "11.5 h, measured"
+          },
+          {
+            "attribute_key": "memory_storage",
+            "label": "Memory and storage",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "RAM and SSD size not stated"
+          },
+          {
+            "attribute_key": "delivery",
+            "label": "Delivery",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "6 weeks"
+          },
+          {
+            "attribute_key": "certifications",
+            "label": "Certifications",
+            "grade": "Below",
+            "points": 25,
+            "weight": 10.0,
+            "reason": "BIS named"
+          },
+          {
+            "attribute_key": "data_wiping",
+            "label": "Data wiping",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "Data wiping not described"
+          }
+        ]
+      },
+      "pros": [
+        "Strong on Delivery plan (9/10, best of all bids)",
+        "Strong on Support (9/10, best of all bids)",
+        "Meets every must-have"
+      ],
+      "cons": [],
+      "risks": [],
+      "warnings": [],
+      "document_sha256": "f8b93a43108ea784233f7197bab84caf3d45766dedbfd53e8aea5ea9940322da"
+    },
+    {
+      "rank": 4,
+      "supplier_name": "Orbit Digital",
+      "submission_date": "2026-10-08",
+      "experience_rating": 5,
+      "absolute_score": 66.0,
+      "ppi": 75.28,
+      "industry_score": 51.25,
+      "eligible": true,
+      "gates": {
+        "warranty": "pass",
+        "certification": "pass",
+        "price_table": "pass",
+        "delivery": "pass"
+      },
+      "criteria": [
+        {
+          "criterion_id": 1,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -2.0,
+          "relative_pct": 77.78,
+          "weight": 30.0,
+          "strength": "Average",
+          "justification": "why 1",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 2,
+          "score": 5.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -4.0,
+          "relative_pct": 55.56,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 2",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 3,
+          "score": 7.0,
+          "max_score": 10.0,
+          "benchmark": 8.0,
+          "gap": -1.0,
+          "relative_pct": 87.5,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 3",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 4,
+          "score": 6.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -3.0,
+          "relative_pct": 66.67,
+          "weight": 20.0,
+          "strength": "Average",
+          "justification": "why 4",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 5,
+          "score": 9.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 10.0,
+          "strength": "Strong",
+          "justification": "why 5",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        }
+      ],
+      "extracted_facts": {
+        "laptop_model": null,
+        "processor": null,
+        "ram_gb": null,
+        "ssd_gb": null,
+        "battery_hours": 11.5,
+        "battery_measured": true,
+        "weight_kg": null,
+        "warranty_years": 3,
+        "warranty_type": "on-site",
+        "repair_time_days": null,
+        "replacement_within_24h": null,
+        "delivery_weeks": 6,
+        "grand_total_rs": null,
+        "unit_price_rs": 59000,
+        "price_table_present": true,
+        "bis_named": true,
+        "energy_rating_named": null,
+        "security_certification_named": null,
+        "data_wipe": null,
+        "encryption_before_delivery": null,
+        "price_lock_later_orders": null
+      },
+      "industry_breakdown": {
+        "score": 51.25,
+        "attributes": [
+          {
+            "attribute_key": "unit_price",
+            "label": "Unit price",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "Rs 59,000 per laptop (budget Rs 60,000 each)"
+          },
+          {
+            "attribute_key": "warranty",
+            "label": "Warranty",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 5.0,
+            "reason": "3 years, on-site"
+          },
+          {
+            "attribute_key": "repair_time",
+            "label": "Repair time",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 5.0,
+            "reason": "Repair time not stated"
+          },
+          {
+            "attribute_key": "battery",
+            "label": "Battery",
+            "grade": "Above",
+            "points": 100,
+            "weight": 15.0,
+            "reason": "11.5 h, measured"
+          },
+          {
+            "attribute_key": "memory_storage",
+            "label": "Memory and storage",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "RAM and SSD size not stated"
+          },
+          {
+            "attribute_key": "delivery",
+            "label": "Delivery",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "6 weeks"
+          },
+          {
+            "attribute_key": "certifications",
+            "label": "Certifications",
+            "grade": "Below",
+            "points": 25,
+            "weight": 10.0,
+            "reason": "BIS named"
+          },
+          {
+            "attribute_key": "data_wiping",
+            "label": "Data wiping",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "Data wiping not described"
+          }
+        ]
+      },
+      "pros": [
+        "Strong on Support (9/10, best of all bids)",
+        "Meets every must-have"
+      ],
+      "cons": [
+        "Weaker on Delivery plan (5/10; best bid 9/10)",
+        "Weaker on Security (6/10; best bid 9/10)"
+      ],
+      "risks": [],
+      "warnings": [],
+      "document_sha256": "2fbe1dfe2df08895031a286fd12e3202c1fbdce59ed3562d05839baa9f4447c5"
+    },
+    {
+      "rank": 5,
+      "supplier_name": "BrightPath Tech",
+      "submission_date": "2026-10-07",
+      "experience_rating": 2,
+      "absolute_score": 48.0,
+      "ppi": 55.56,
+      "industry_score": 16.25,
+      "eligible": false,
+      "gates": {
+        "warranty": "fail",
+        "certification": "fail",
+        "price_table": "pass",
+        "delivery": "pass"
+      },
+      "criteria": [
+        {
+          "criterion_id": 1,
+          "score": 5.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -4.0,
+          "relative_pct": 55.56,
+          "weight": 30.0,
+          "strength": "Average",
+          "justification": "why 1",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 2,
+          "score": 4.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -5.0,
+          "relative_pct": 44.44,
+          "weight": 20.0,
+          "strength": "Weak",
+          "justification": "why 2",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 3,
+          "score": 8.0,
+          "max_score": 10.0,
+          "benchmark": 8.0,
+          "gap": 0.0,
+          "relative_pct": 100.0,
+          "weight": 20.0,
+          "strength": "Strong",
+          "justification": "why 3",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 4,
+          "score": 3.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -6.0,
+          "relative_pct": 33.33,
+          "weight": 20.0,
+          "strength": "Weak",
+          "justification": "why 4",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        },
+        {
+          "criterion_id": 5,
+          "score": 3.0,
+          "max_score": 10.0,
+          "benchmark": 9.0,
+          "gap": -6.0,
+          "relative_pct": 33.33,
+          "weight": 10.0,
+          "strength": "Weak",
+          "justification": "why 5",
+          "evidence": "We offer laptops. (Page 1)",
+          "evidence_found": true
+        }
+      ],
+      "extracted_facts": {
+        "laptop_model": null,
+        "processor": null,
+        "ram_gb": null,
+        "ssd_gb": null,
+        "battery_hours": null,
+        "battery_measured": null,
+        "weight_kg": null,
+        "warranty_years": 1,
+        "warranty_type": "carry-in",
+        "repair_time_days": null,
+        "replacement_within_24h": null,
+        "delivery_weeks": 6,
+        "grand_total_rs": null,
+        "unit_price_rs": null,
+        "price_table_present": true,
+        "bis_named": null,
+        "energy_rating_named": null,
+        "security_certification_named": null,
+        "data_wipe": null,
+        "encryption_before_delivery": null,
+        "price_lock_later_orders": null
+      },
+      "industry_breakdown": {
+        "score": 16.25,
+        "attributes": [
+          {
+            "attribute_key": "unit_price",
+            "label": "Unit price",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 20.0,
+            "reason": "Unit price not stated"
+          },
+          {
+            "attribute_key": "warranty",
+            "label": "Warranty",
+            "grade": "Below",
+            "points": 25,
+            "weight": 5.0,
+            "reason": "1 year, carry-in"
+          },
+          {
+            "attribute_key": "repair_time",
+            "label": "Repair time",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 5.0,
+            "reason": "Repair time not stated"
+          },
+          {
+            "attribute_key": "battery",
+            "label": "Battery",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "Battery life not stated"
+          },
+          {
+            "attribute_key": "memory_storage",
+            "label": "Memory and storage",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 15.0,
+            "reason": "RAM and SSD size not stated"
+          },
+          {
+            "attribute_key": "delivery",
+            "label": "Delivery",
+            "grade": "Meets",
+            "points": 75,
+            "weight": 20.0,
+            "reason": "6 weeks"
+          },
+          {
+            "attribute_key": "certifications",
+            "label": "Certifications",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "No certifications stated"
+          },
+          {
+            "attribute_key": "data_wiping",
+            "label": "Data wiping",
+            "grade": "Not stated",
+            "points": 0,
+            "weight": 10.0,
+            "reason": "Data wiping not described"
+          }
+        ]
+      },
+      "pros": [
+        "Strong on Value for money (8/10, best of all bids)"
+      ],
+      "cons": [
+        "Not eligible: Warranty — 1 year (at least 3 required)",
+        "Not eligible: Certification — Not stated",
+        "Weaker on Laptop specs (5/10; best bid 9/10)"
+      ],
+      "risks": [],
+      "warnings": [],
+      "document_sha256": "a8869234eade0b62b945a2515544333b80db79704c2514c4cdcae4afe47a3c66"
+    }
+  ],
+  "recommendation": {
+    "recommended": "Apex Systems",
+    "runner_up": "NexaWorks",
+    "reason": "It meets every must-have and leads where it counts.",
+    "industry_warning": "Below industry standard on: Repair time, Memory and storage, Certifications, Data wiping"
+  },
+  "tie_break_explanations": [
+    "NexaWorks above Horizon Datacom: higher experience rating (4 vs 3)"
+  ],
+  "feedback_rounds": [],
+  "negotiation_points": [],
+  "totals": {
+    "tokens": 5000,
+    "cost_usd": 0.05,
+    "duration_seconds": 0.06
+  }
+}

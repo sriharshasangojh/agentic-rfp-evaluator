@@ -41,7 +41,8 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | Price score | Commercial Value worked out from the totals | Approved | 2026-10-24 | Lowest total gets full marks, others max x lowest / total; AI marks kept in attempts; audit event `price_marks_set`; tests: 29 new | 0 |
 | F20 | Final recommendation and negotiation | Approved | 2026-10-24 | After 3 rounds: Python picks the final supplier, AI words the fit note and up to 5 negotiation points (no other supplier named); saved in `negotiation_points`; tests: 79 new | 0 |
 | F21 | Audit: history and trail | Approved | 2026-10-25 | Tiles, run history with filters, open a past run read-only, change trail with score-changes filter, PDF fingerprints, JSON feedback_rounds; plus: leaning and price wish (extension), formula only on request, two picks panel, return to best fit after 3 unhappy rounds, reviewer name required, negotiation heading; tests: 27 + 46 + 41 new | 0 |
-| M3 | Milestone: push | Not started | | | |
-| F22 | README and sample run | Not started | | | |
+| Report | PDF report and mail link (extension) | In review | 2026-10-25 | tools/report.py, ui/report.py, 9 tests; rapidfuzz pinned | 0 |
+| M3 | Milestone: push | Pre-push checks done; waiting for the user's "yes" | 2026-10-25 | | |
+| F22 | README and sample run | In review | 2026-10-25 | README (spec 19, with known differences), samples/sample_run.json, tests/test_docs.py (4) | 0 |
 | F23 | Deployment readiness | Not started | | | |
 | M4 | Milestone: final push | Not started | | | |
