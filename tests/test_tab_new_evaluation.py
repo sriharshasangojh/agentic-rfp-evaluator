@@ -23,6 +23,7 @@ from agents import orchestrator  # noqa: E402
 from llm import client  # noqa: E402
 from tools import pdf_tool  # noqa: E402
 from ui import sidebar, tab_new_evaluation  # noqa: E402
+from review_support import is_summary_call, summary_response  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = ROOT / "app.py"
@@ -66,6 +67,8 @@ class FakeModel:
         self.outcomes, self.calls = list(outcomes), 0
 
     def completion(self, **kwargs):
+        if is_summary_call(kwargs):                    # the wording call of F16: answered, but not counted among the evaluation calls
+            return summary_response(kwargs)
         outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
         self.calls += 1
         if isinstance(outcome, BaseException):
@@ -76,8 +79,8 @@ class FakeModel:
     def supports_json_mode(self, settings) -> bool:
         return True
 
-    def cost(self, response) -> float:
-        return 0.01
+    def cost(self, response) -> float | None:
+        return None if getattr(response, "summary", False) else 0.01
 
 
 @pytest.fixture(autouse=True)

@@ -18,7 +18,7 @@ from __future__ import annotations
 import html
 import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import streamlit as st
@@ -158,6 +158,7 @@ class Row:
     price: insights.PriceFacts = insights.PriceFacts(None, None, None, None)
     pros: tuple[insights.Reason, ...] = ()
     cons: tuple[insights.Reason, ...] = ()
+    reason: str | None = None           # the AI's one sentence on why this supplier is good, while it still fits (feature F16)
 
     @property
     def short_reason(self) -> str:
@@ -179,6 +180,7 @@ class Verdict:
     name: str | None                    # the supplier's name (shown bold after the lead), or None
     sentence: str
     pills: tuple[Pill, ...]
+    reason: str = ""                     # the AI's sentence on why we recommend it (feature F16); empty when there is none
 
 
 @dataclass(frozen=True)
@@ -292,11 +294,14 @@ def _row(stored: repository.StoredSupplier, budget_rs: float | None = None) -> R
     result = stored.result
     cells = _gate_cells(result)
     failed = bool(result.get("evaluation_failed"))
+    reason = None
     if failed:
         chosen = insights.ProsCons((), ())     # a failed evaluation has no marks worth praising or criticising
     else:
         chosen = insights.select_pros_cons(
             _criterion_results(result), tuple(insights.GateOutcome(c.gate_id, c.name, c.passed, c.reason) for c in cells))
+        reason = insights.reason_for(chosen, result.get("wording"))           # only while the points it was written from still stand
+        chosen = insights.apply_wording(chosen, result.get("wording"))        # the AI's words for the points Python chose
     return Row(
         rank=stored.final_rank, name=stored.supplier_name, overall=stored.absolute_score, ppi=stored.ppi,
         industry=stored.industry_score, submitted=orchestrator.format_submitted(stored.submission_date),
@@ -304,7 +309,7 @@ def _row(stored: repository.StoredSupplier, budget_rs: float | None = None) -> R
         why_not=_why_not(stored), weak_attributes=_weak_attributes(result),
         tie_break=result.get("tie_break_explanation") or None, strengths=_strengths(result),
         evaluation_failed=failed, problems=_problems(stored, cells), gates=cells,
-        price=insights.price_facts(result.get("extracted_facts"), budget_rs), pros=chosen.pros, cons=chosen.cons)
+        price=insights.price_facts(result.get("extracted_facts"), budget_rs), pros=chosen.pros, cons=chosen.cons, reason=reason)
 
 
 def _join_names(names: list[str]) -> str:
@@ -410,6 +415,8 @@ def build_overview(run: repository.RunRecord, suppliers: list[repository.StoredS
         for cell in row.gates:
             columns.setdefault(cell.gate_id, MustHave(cell.gate_id, cell.label, cell.name))
     verdict = build_verdict(rows, recommended, top, (recommended.weak_attributes if warning else None) if recommended else None)
+    if recommended is not None and recommended.reason:
+        verdict = replace(verdict, reason=recommended.reason)
     return Overview(_run_line(run, len(rows)), rows, recommendation, recommended, runner_up, top, warning, criteria,
                     verdict, _budget_line(run), tuple(columns.values()))
 
@@ -499,6 +506,8 @@ def verdict_html(verdict: Verdict) -> str:
         f'<span class="ov-chip" style="color:{TONE_COLOURS[p.tone][0]};background:{TONE_COLOURS[p.tone][1]}">'
         f'{SYMBOLS[p.tone]} {_e(p.text)}</span>' for p in verdict.pills)
     sentence = f'<div class="ov-banner-text">{_e(verdict.sentence)}</div>' if verdict.sentence else ""
+    if verdict.reason:
+        sentence += f'<div class="ov-banner-text ov-banner-why"><strong>Why:</strong> {_e(verdict.reason)}</div>'
     return (f'<style>{_CSS}</style><div class="ov-banner" style="border-left-color:{TONE_EDGES[verdict.tone]}">'
             f'<div class="ov-banner-head">{lead}</div>{sentence}<div class="ov-pills">{chips}</div></div>')
 

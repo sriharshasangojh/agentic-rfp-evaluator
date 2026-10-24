@@ -44,24 +44,50 @@ def response(text: str, tokens: int = 1000):
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))], usage=SimpleNamespace(total_tokens=tokens))
 
 
+SUMMARY_PROMPT_START = "You write short, plain-language points"
+REASON = "It meets every must-have and leads where it counts."
+
+
+def is_summary_call(kwargs) -> bool:
+    """True for the wording call of feature F16 (the system prompt is the summarizer's)."""
+    messages = kwargs.get("messages") or [{}]
+    return str(messages[0].get("content", "")).startswith(SUMMARY_PROMPT_START)
+
+
+def summary_response(kwargs, *, reason: str = REASON):
+    """A well-behaved summarizer: every point comes back in the template's own words, plus a reason. It reports no tokens or cost, so
+    the many older tests that count tokens, cost and calls keep their numbers; the wording has its own tests."""
+    body = json.loads(kwargs["messages"][1]["content"])
+    text = json.dumps({"pros": [i["point"] for i in body["pros"]], "cons": [i["point"] for i in body["cons"]], "reason": reason})
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))], usage=None, summary=True)
+
+
 class FakeBackend:
-    """Returns the prepared replies in order (the last one repeats). An exception in the list is raised instead."""
+    """Returns the prepared replies in order (the last one repeats). An exception in the list is raised instead.
+    The wording call (F16) is answered by `summary_response` and kept in `summary_calls`, not in `calls`."""
 
     def __init__(self, *outcomes, cost: float = 0.01) -> None:
-        self.outcomes, self.calls, self.cost_value = list(outcomes), [], cost
+        self.outcomes, self.calls, self.cost_value, self.summary_calls = list(outcomes), [], cost, []
 
     def completion(self, **kwargs):
+        if is_summary_call(kwargs):
+            self.summary_calls.append(kwargs)
+            return self.summary_reply(kwargs)
         self.calls.append(kwargs)
         outcome = self.outcomes[min(len(self.calls), len(self.outcomes)) - 1]
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome if not isinstance(outcome, str) else response(outcome)
 
+    def summary_reply(self, kwargs):
+        """The answer to a wording call; a test overrides this to misbehave."""
+        return summary_response(kwargs)
+
     def supports_json_mode(self, settings) -> bool:
         return True
 
-    def cost(self, response) -> float:
-        return self.cost_value
+    def cost(self, response) -> float | None:
+        return None if getattr(response, "summary", False) else self.cost_value
 
     def sent_text(self) -> str:
         return "\n".join(m["content"] for call in self.calls for m in call["messages"])

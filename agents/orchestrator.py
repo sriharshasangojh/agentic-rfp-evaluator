@@ -39,7 +39,7 @@ from datetime import date, datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from agents import evaluator, feedback, qa_agent
+from agents import evaluator, feedback, qa_agent, summarizer
 from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
@@ -279,6 +279,23 @@ def make_run_id(moment: datetime, token: str) -> str:
     return f"RUN-{moment.astimezone(timezone.utc):%Y%m%d-%H%M%S}-{token}"
 
 
+def chosen_points(r: ranking.RankedSupplier, marks: Sequence[Any], criteria: dict[int, RunCriterion],
+                  gates: Sequence[gates_tool.GateResult], evidence: dict[int, bool | None]) -> tuple[insights.ProsCons, dict[str, tuple[str, str]]]:
+    """The points Python chooses for one supplier (spec 10.1), plus the justification and evidence that go with each, for the wording."""
+    by_id = {m.criterion_id: m for m in marks}
+    results = [insights.CriterionResult(
+        cr.criterion_id, criteria[cr.criterion_id].name, cr.score, cr.max_score, cr.weight, cr.benchmark, cr.gap, cr.relative_pct,
+        by_id[cr.criterion_id].filled_by_validator, evidence.get(cr.criterion_id)) for cr in r.criteria]
+    chosen = insights.select_pros_cons(results, [insights.GateOutcome(g.gate_id, g.name, g.passed, g.reason) for g in gates])
+    support: dict[str, tuple[str, str]] = {}
+    for reason in (*chosen.pros, *chosen.cons):
+        if reason.key.split(":")[0] in ("criterion", "evidence", "not_stated"):
+            mark = by_id.get(int(reason.key.split(":")[1]))
+            if mark is not None:
+                support[reason.key] = (mark.justification, mark.evidence)
+    return chosen, support
+
+
 def _total(values: Sequence[float | int | None]) -> float | int | None:
     known = [v for v in values if v is not None]
     return sum(known) if known else None
@@ -456,6 +473,43 @@ def run_evaluation(
         industry_results = {n: industry.industry_score(facts[n], benchmarks, criteria, terms) for n in names}
         log("Graded every supplier against the industry baseline.")
 
+        # --- the AI words the points Python chose (spec 10.1 / 7.3); a problem here never stops the run
+        wordings: dict[str, summarizer.Wording | None] = {}
+        chosen_of: dict[str, insights.ProsCons] = {}
+        for r in ranked.suppliers:
+            outcome = outcomes[r.name]
+            if outcome.failed:                                  # nothing worth praising or criticising in a failed evaluation
+                chosen_of[r.name], wordings[r.name] = insights.ProsCons((), ()), None
+                continue
+            chosen, support = chosen_points(r, outcome.scorecard.criteria, {c.criterion_id: c for c in criteria}, gate_results[r.name],
+                                            evidence_flags.get(r.name, {}))
+            chosen_of[r.name] = chosen
+            if not chosen.pros and not chosen.cons:
+                wordings[r.name] = None
+                continue
+            others = [n for n in names if n != r.name]
+            try:
+                wording = summarizer.word_points(chosen, support, others, settings, backend=backend, sleep=sleep)
+            except client.LLMError as exc:
+                wordings[r.name] = None
+                record("AI", "wording_failed", {"supplier": r.name, "kind": exc.kind})
+                log(f"Could not word the points for {r.name} ({exc.user_message}). The plain wording is used.")
+                continue
+            except summarizer.SummarizerError as exc:
+                wordings[r.name] = None
+                token_counts.append(exc.tokens)
+                costs.append(exc.cost_usd)
+                record("AI", "wording_failed", {"supplier": r.name, "kind": "unusable_reply", "tokens": exc.tokens})
+                log(f"The AI's wording for {r.name} could not be used. The plain wording is used.")
+                continue
+            wordings[r.name] = wording
+            token_counts.append(wording.tokens)
+            costs.append(wording.cost_usd)
+            record("AI", "points_worded", {"supplier": r.name, "pros": len(wording.pros), "cons": len(wording.cons),
+                                           "kept_plain": wording.kept_plain, "reason": wording.reason is not None,
+                                           "tokens": wording.tokens, "cost_usd": wording.cost_usd, "model": settings.model})
+        log(f"Worded the good and bad points for {sum(w is not None for w in wordings.values())} supplier(s).")
+
         # --- save the results
         by_name = {n: (p, o) for n, p, o in zip(names, proposals, (outcomes[n] for n in names))}
         criterion_info = {c.criterion_id: c for c in criteria}
@@ -472,6 +526,8 @@ def run_evaluation(
                 card = outcome.scorecard
                 by_id = {c.criterion_id: c for c in card.criteria}
                 warnings = (*outcome.warnings, *industry_for.warnings, *ranked.warnings)
+                saved_wording = wordings[r.name].as_saved() if wordings[r.name] else None
+                shown = insights.apply_wording(chosen_of[r.name], saved_wording)
                 result = {
                     "rank": r.rank, "supplier_name": r.name, "file_name": proposal.file_name,
                     "submission_date": proposal.submission_date.isoformat(), "experience_rating": proposal.experience_rating,
@@ -493,7 +549,9 @@ def run_evaluation(
                         "attributes": [{"attribute_key": a.attribute_key, "label": a.label, "grade": a.grade,
                                         "points": a.points, "weight": a.weight, "reason": a.reason}
                                        for a in industry_for.attributes]},
-                    "pros": [], "cons": [], "risks": list(card.risks), "overall_summary": card.overall_summary,
+                    "pros": [reason.text for reason in shown.pros], "cons": [reason.text for reason in shown.cons],
+                    "wording": saved_wording,
+                    "risks": list(card.risks), "overall_summary": card.overall_summary,
                     "warnings": list(warnings), "evaluation_failed": outcome.failed,
                     "tie_break_explanation": winners_of_ties.get(r.name),
                     "document_sha256": proposal.pdf.sha256, "pages": proposal.pdf.page_count,

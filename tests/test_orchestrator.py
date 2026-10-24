@@ -22,6 +22,7 @@ from agents.orchestrator import Proposal, RunResult
 from db import repository, seed
 from llm import client
 from tools import industry, pdf_tool, ranking
+from review_support import REASON, is_summary_call, summary_response
 
 ROOT = Path(__file__).resolve().parents[1]
 TERMS = industry.PurchaseTerms(budget_rs=6000000, quantity=100)
@@ -77,9 +78,12 @@ def make_error(name: str, status: int | None = None, message: str = "") -> Excep
 
 class FakeBackend:
     def __init__(self, *outcomes, cost: float = 0.01) -> None:
-        self.outcomes, self.calls, self.cost_value = list(outcomes), [], cost
+        self.outcomes, self.calls, self.cost_value, self.summary_calls = list(outcomes), [], cost, []
 
     def completion(self, **kwargs):
+        if is_summary_call(kwargs):                    # the wording call of F16 is answered and kept apart (see review_support)
+            self.summary_calls.append(kwargs)
+            return summary_response(kwargs)
         self.calls.append(kwargs)
         outcome = self.outcomes[min(len(self.calls), len(self.outcomes)) - 1]
         if isinstance(outcome, BaseException):
@@ -89,8 +93,8 @@ class FakeBackend:
     def supports_json_mode(self, settings) -> bool:
         return True
 
-    def cost(self, response) -> float:
-        return self.cost_value
+    def cost(self, response) -> float | None:
+        return None if getattr(response, "summary", False) else self.cost_value
 
 
 def synthetic_pdf(name: str) -> pdf_tool.ExtractedPdf:
@@ -428,7 +432,9 @@ def test_each_supplier_result_holds_everything_the_screens_need():
     assert [c["strength"] for c in apex["criteria"]] == ["Strong", "Average", "Average", "Strong", "Strong"]
     assert apex["extracted_facts"]["grand_total_rs"] == 7398600 and apex["extracted_facts"]["bis_named"] is True
     assert apex["industry_breakdown"]["score"] == saved[0][5] and len(apex["industry_breakdown"]["attributes"]) == 8
-    assert apex["pros"] == [] and apex["cons"] == [] and apex["evaluation_failed"] is False
+    assert apex["pros"][0] == "Strong on Laptop specs (9/10, best of all bids)" and apex["pros"][-1] == "Meets every must-have"   # worded in F16
+    assert apex["cons"] == ["Weaker on Value for money (5/10; best bid 8/10)"] and apex["evaluation_failed"] is False
+    assert apex["wording"]["reason"] == REASON and apex["wording"]["reason_for"] == ["criterion:1", "criterion:4", "all_gates"]
     assert apex["document_sha256"] == hashlib.sha256(b"Apex Systems").hexdigest() and apex["pages"] == 2
     nexa = json.loads(saved[1][8])
     assert nexa["tie_break_explanation"] == "NexaWorks above Horizon Datacom: higher experience rating (4 vs 3)"
@@ -478,7 +484,7 @@ def test_the_audit_log_tells_the_story_in_order():
     actions = [(a, b) for a, b in rows("SELECT actor, action FROM audit_log ORDER BY id")]
     assert actions == ([("system", "run_created"), ("system", "documents_read")]
                        + [("AI", "supplier_evaluated")] * 5 + [("system", "gate_results")] * 5
-                       + [("system", "ranking_computed"), ("system", "run_evaluated")])
+                       + [("system", "ranking_computed")] + [("AI", "points_worded")] * 5 + [("system", "run_evaluated")])
     first = json.loads(rows("SELECT details_json FROM audit_log WHERE action = 'supplier_evaluated'")[0][0])
     assert first["supplier"] == "Apex Systems" and first["attempt_no"] == 1 and first["model"] == "test-model"
     ranking_event = json.loads(rows("SELECT details_json FROM audit_log WHERE action = 'ranking_computed'")[0][0])
@@ -503,7 +509,8 @@ def test_the_step_log_is_given_live_and_returned():
     assert [s for s in seen if s.startswith("Evaluating")][0] == "Evaluating Apex Systems (1 of 5) with openai/test-model..."
     assert "Evaluated Apex Systems: ok, 1000 tokens, 0 warning(s)." in seen
     assert "Checked 4 gate(s) for 5 supplier(s): 1 not eligible (BrightPath Tech)." in seen
-    assert seen[-3].startswith("Ranked 5 supplier(s). 1. Apex Systems (peer score 86.94), 2. NexaWorks")
+    assert seen[-2] == "Worded the good and bad points for 5 supplier(s)."
+    assert seen[-4].startswith("Ranked 5 supplier(s). 1. Apex Systems (peer score 86.94), 2. NexaWorks")
     assert seen[-1].startswith("Saved the results. Run RUN-20261023-123015-ab12 evaluated 5 supplier(s)")
 
 

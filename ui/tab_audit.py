@@ -151,7 +151,7 @@ def _supplier_export(stored: repository.StoredSupplier, row: tab_overview.Row | 
                      for item in _items(result.get("criteria")) if isinstance(item, dict)],
         "extracted_facts": _clean(facts) if isinstance(facts, dict) else {},
         "industry_breakdown": _clean(breakdown) if isinstance(breakdown, dict) else {},
-        # the same pros and cons as the Overview and Scorecards show (feature F16 will change where they come from, everywhere)
+        # the same pros and cons as the Overview and Scorecards show (the AI's wording where it gave some, feature F16)
         "pros": [reason.text for reason in row.pros] if row else [],
         "cons": [reason.text for reason in row.cons] if row else [],
         "risks": _texts(result.get("risks")),
@@ -179,7 +179,7 @@ def build_export(run: repository.RunRecord, suppliers: list[repository.StoredSup
         "recommendation": {
             "recommended": overview.recommendation.recommended,
             "runner_up": overview.recommendation.runner_up,
-            "reason": overview.verdict.sentence,
+            "reason": overview.verdict.reason or overview.verdict.sentence,
             "industry_warning": overview.industry_warning,
         },
         "tie_break_explanations": [row.tie_break for row in overview.rows if row.tie_break],

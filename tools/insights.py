@@ -8,7 +8,7 @@ features. Pure functions only: no LLM, no I/O, no randomness, no clock.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 
 STRONG = "Strong"
@@ -254,6 +254,7 @@ class Reason:
     text: str
     basis: str      # what it is measured against: BASIS_*
     kind: str       # which rule selected it: KIND_*
+    key: str = field(default="", compare=False)    # what it is about ("criterion:3", "gate:bis"): how the AI's wording finds its item again
 
 
 @dataclass(frozen=True)
@@ -315,23 +316,55 @@ def select_pros_cons(criteria: Sequence[CriterionResult], gates: Sequence[GateOu
         return _exact(item.weight) * _exact(amount)
 
     pro_items = sorted((c for c in criteria if _is_pro(c)), key=lambda c: -weighted(c, c.score))
-    pros = [Reason(_pro_text(c), BASIS_BATCH, KIND_CRITERION) for c in pro_items]
+    pros = [Reason(_pro_text(c), BASIS_BATCH, KIND_CRITERION, f"criterion:{c.criterion_id}") for c in pro_items]
     if gates and all(g.passed for g in gates):
-        pros.append(Reason("Meets every must-have", BASIS_REQUIREMENT, KIND_ALL_GATES))
+        pros.append(Reason("Meets every must-have", BASIS_REQUIREMENT, KIND_ALL_GATES, "all_gates"))
 
-    cons = [Reason(f"Not eligible: {_flat(g.name)} \u2014 {_flat(g.reason)}", BASIS_REQUIREMENT, KIND_GATE)
+    cons = [Reason(f"Not eligible: {_flat(g.name)} \u2014 {_flat(g.reason)}", BASIS_REQUIREMENT, KIND_GATE, f"gate:{g.gate_id}")
             for g in gates if not g.passed]
     used: set[int] = set()
     behind = sorted((c for c in criteria if c.gap is not None and -c.gap >= BEHIND_BY), key=lambda c: -weighted(c, -c.gap))   # type: ignore[operator]
     for item in behind:
-        cons.append(Reason(_con_text(item), BASIS_BATCH, KIND_CRITERION))
+        cons.append(Reason(_con_text(item), BASIS_BATCH, KIND_CRITERION, f"criterion:{item.criterion_id}"))
         used.add(item.criterion_id)
     for item in criteria:
         if item.evidence_found is False and item.criterion_id not in used:
-            cons.append(Reason(f"Evidence for {plain_label(item.name)} was not found in the proposal", BASIS_EVIDENCE, KIND_EVIDENCE))
+            cons.append(Reason(f"Evidence for {plain_label(item.name)} was not found in the proposal", BASIS_EVIDENCE, KIND_EVIDENCE,
+                            f"evidence:{item.criterion_id}"))
             used.add(item.criterion_id)
     for item in criteria:
         if item.filled_by_validator and item.score == 0 and item.criterion_id not in used:
-            cons.append(Reason(f"{plain_label(item.name)} not stated in the proposal", BASIS_NOT_STATED, KIND_NOT_STATED))
+            cons.append(Reason(f"{plain_label(item.name)} not stated in the proposal", BASIS_NOT_STATED, KIND_NOT_STATED,
+                            f"not_stated:{item.criterion_id}"))
             used.add(item.criterion_id)
     return ProsCons(tuple(pros[:PROS_MAX]), tuple(cons[:CONS_MAX]))
+
+
+# ---------------------------------------------------------------- the AI's wording of the chosen points (spec 10.1, feature F16)
+
+def apply_wording(chosen: ProsCons, wording: object) -> ProsCons:
+    """The same points, in the AI's words where it gave some. `wording` is what the run saved: {"pros": {key: text}, "cons": {key: text}}.
+    A point whose key has no wording (the choice changed after a re-rank, or the AI left it out) keeps its plain template text, so
+    nothing is ever shown that was not chosen by Python and nothing is lost. Which points there are, their order and their label
+    never come from the AI."""
+    if not isinstance(wording, dict):
+        return chosen
+
+    def swap(items: tuple[Reason, ...], words: object) -> tuple[Reason, ...]:
+        if not isinstance(words, dict):
+            return items
+        return tuple(replace(r, text=" ".join(str(words[r.key]).split())) if r.key and isinstance(words.get(r.key), str) and str(words[r.key]).strip()
+                     else r for r in items)
+
+    return ProsCons(swap(chosen.pros, wording.get("pros")), swap(chosen.cons, wording.get("cons")))
+
+
+def reason_for(chosen: ProsCons, wording: object) -> str | None:
+    """The AI's one-sentence reason for recommending a supplier, only while it still fits: it was written from certain pros, so it is
+    shown only when the supplier's pros are still exactly those (a re-rank that changes them hides it)."""
+    if not isinstance(wording, dict):
+        return None
+    reason, basis = wording.get("reason"), wording.get("reason_for")
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(basis, list):
+        return None
+    return " ".join(reason.split()) if [r.key for r in chosen.pros] == basis and basis else None
