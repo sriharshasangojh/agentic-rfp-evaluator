@@ -908,7 +908,7 @@ def test_the_figure_uses_the_theme_colours_and_a_dashed_budget_line_in_lakh():
     assert list(bar.text) == ["Rs 56 lakh", "Rs 73.99 lakh"] and bar.textposition == "inside" and bar.insidetextanchor == "start"     # inside, so the dashed line never cuts a label
     line = figure.layout.shapes[0]
     assert (line.x0, line.x1) == (60.0, 60.0) and line.line.dash == "dash" and line.line.color == tab_overview.theme.BUDGET_LINE
-    assert figure.layout.xaxis.range[1] > 73.986            # room for the longest bar
+    assert figure.layout.xaxis.range[1] > 73.986 and figure.layout.yaxis.autorange == "reversed"    # room for the longest bar; best rank on top
 
 
 def test_the_budget_line_is_inside_the_axis_when_every_bar_is_shorter():

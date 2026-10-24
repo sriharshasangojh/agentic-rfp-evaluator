@@ -1,6 +1,6 @@
 """Tab 2: New evaluation (feature F09, spec sections 8 and 13.3).
 
-The visitor uploads 1 to 10 supplier proposal PDFs and checks one small form per PDF: the supplier name (suggested from
+The visitor uploads 2 to 10 supplier proposal PDFs and checks one small form per PDF: the supplier name (suggested from
 the file name), the submission date (read from the PDF; see `orchestrator.suggest_submission_date`) and an optional
 experience rating. They also
 set the buyer's budget and quantity, then click **Evaluate suppliers**. The checks, the run and
@@ -25,7 +25,7 @@ import streamlit as st
 from agents import evaluator, orchestrator
 from db import repository
 from llm import client
-from tools import industry, insights, pdf_tool
+from tools import industry, insights, pdf_tool, reweight
 from ui import sidebar
 
 DEFAULT_BUDGET_RS = 6_000_000      # Meridian's RFP; the visitor can change it for any other purchase
@@ -39,6 +39,11 @@ RESULT_KEY = "ne_result"           # the RunResult of the latest run, shown unti
 BUTTON_KEY = "ne_evaluate"
 SHOWN_RUN_KEY = "shown_run_id"     # the finished run that the Overview (and later the Scorecards and Audit tabs) show
 REQUEST_KEY = "ne_run_requested"   # set by the button; the next redraw of this tab runs the batch (and clears it at once)
+PRIORITY_TICK_KEY = "ne_prio_{}"   # one tick box per criterion; the key holds True when ticked
+PRIORITY_TEXT_KEY = "ne_prio_text"          # the sentence the buyer is writing
+PRIORITY_READ_KEY = "ne_prio_read_requested"  # set by the button; the next redraw asks the AI (and clears it at once)
+PRIORITY_READING_KEY = "ne_prio_reading"    # the AI's answer to the latest sentence, waiting for the buyer's yes or no
+PRIORITY_TYPED_KEY = "ne_prio_typed"        # the sentences the buyer confirmed (each one ticked a criterion)
 PROPOSAL_CHUNKS_KEY = "ne_proposal_chunks"   # (run id, the proposals cut into chunks) of the latest finished run, for the Ask the RFP tab
 
 MIN_DATE = date(orchestrator.FIRST_YEAR, 1, 1)   # the range the date box accepts
@@ -86,9 +91,73 @@ def _purchase_terms(disabled: bool) -> industry.PurchaseTerms | None:
     return terms
 
 
+PRIORITIES_LABEL = "Your priorities (optional)"
+PRIORITIES_INTRO = ("Tick what matters more to you in this purchase. Each tick adds 10 points to that criterion's weight (at most 60) "
+                    "and the others shrink so the total stays 100. It applies to this evaluation only; Setup is not changed.")
+PRIORITIES_WRITE_LABEL = "Or tell us in your own words"
+PRIORITIES_WRITE_HELP = ("For example: I want laptops that last a full working day. The AI reads it and says which criterion it "
+                         "understood; nothing changes until you confirm.")
+NEED_A_KEY_TEXT = "Before the AI can read what you wrote, choose a provider, validate your API key and pick a model in the sidebar."
+
+
+def _queue_read() -> None:
+    st.session_state[PRIORITY_READ_KEY] = True
+    st.session_state.pop(PRIORITY_READING_KEY, None)
+
+
+def _confirm_priority() -> None:
+    """The buyer said yes: tick the criterion the AI named and remember the sentence (it is saved with the run)."""
+    reading = st.session_state.pop(PRIORITY_READING_KEY, None)
+    if reading is None or reading.typed is None:
+        return
+    st.session_state[PRIORITY_TICK_KEY.format(reading.typed.criterion_id)] = True
+    st.session_state[PRIORITY_TYPED_KEY] = [*st.session_state.get(PRIORITY_TYPED_KEY, []), reading.typed]
+    st.session_state[PRIORITY_TEXT_KEY] = ""
+
+
+def _reject_priority() -> None:
+    st.session_state.pop(PRIORITY_READING_KEY, None)
+
+
+def _priorities(disabled: bool, settings: client.LLMSettings | None) -> orchestrator.PriorityRequest:
+    """"Your priorities": tick boxes for what matters more, and a box to say it in words (read by the AI, confirmed by the buyer)."""
+    with repository.connection() as conn:
+        criteria = repository.list_criteria(conn, active_only=True)
+    with st.expander(PRIORITIES_LABEL, expanded=False):
+        st.caption(PRIORITIES_INTRO)
+        for c in criteria:
+            st.checkbox(f"{c.name}: {reweight.priority_label(c.name)}", key=PRIORITY_TICK_KEY.format(c.criterion_id), disabled=disabled)
+        st.text_area(PRIORITIES_WRITE_LABEL, key=PRIORITY_TEXT_KEY, max_chars=reweight.NEED_MAX_CHARS, disabled=disabled,
+                     help=PRIORITIES_WRITE_HELP, height=80)
+        st.button("Understand what I wrote", key="ne_prio_read", on_click=_queue_read, disabled=disabled)
+        if st.session_state.pop(PRIORITY_READ_KEY, False):
+            if settings is None:
+                st.session_state[PRIORITY_READING_KEY] = orchestrator.PriorityReading(False, NEED_A_KEY_TEXT)
+            else:
+                with st.spinner("Reading what you wrote..."):
+                    st.session_state[PRIORITY_READING_KEY] = orchestrator.understand_priority(
+                        str(st.session_state.get(PRIORITY_TEXT_KEY) or ""), settings)
+        reading = st.session_state.get(PRIORITY_READING_KEY)
+        if reading is not None:
+            if reading.ok and reading.typed is not None:
+                name = next((c.name for c in criteria if c.criterion_id == reading.typed.criterion_id), "that criterion")
+                st.info(f"{reading.typed.reading} That would tick **{name}**. Is that right?")
+                yes, no = st.columns(2)
+                yes.button("Yes, tick it", key="ne_prio_yes", on_click=_confirm_priority, disabled=disabled)
+                no.button("No, that is not it", key="ne_prio_no", on_click=_reject_priority, disabled=disabled)
+            else:
+                st.warning(reading.message)
+        ticked = tuple(c.criterion_id for c in criteria if st.session_state.get(PRIORITY_TICK_KEY.format(c.criterion_id)))
+        for typed in st.session_state.get(PRIORITY_TYPED_KEY, []):
+            if typed.criterion_id in ticked:
+                st.caption(f"You wrote: \u201c{typed.text}\u201d")
+        st.caption(reweight.describe_priorities(reweight.plan_priorities(criteria, ticked)))
+    return orchestrator.PriorityRequest(ticked, tuple(st.session_state.get(PRIORITY_TYPED_KEY, [])))
+
+
 def _uploaded_files(disabled: bool) -> list[Any]:
     files = st.file_uploader(
-        "Supplier proposals (PDF, 1 to 10 files)", type=["pdf"], accept_multiple_files=True, key=FILES_KEY,
+        "Supplier proposals (PDF, 2 to 10 files)", type=["pdf"], accept_multiple_files=True, key=FILES_KEY,
         disabled=disabled, help="Text-based PDFs only. Each file is one supplier's proposal.")
     return list(files or [])
 
@@ -165,13 +234,14 @@ def _show_checks(check: orchestrator.InputCheck) -> None:
 
 # ---------------------------------------------------------------- running and showing a run
 
-def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTerms, settings: client.LLMSettings) -> None:
+def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTerms, settings: client.LLMSettings,
+         priorities: orchestrator.PriorityRequest | None = None) -> None:
     """Run the batch inside a live step log, keep the result, then redraw so the sidebar unlocks."""
     reviewer = str(st.session_state.get("reviewer_name") or "")
     result: orchestrator.RunResult | None = None
     try:
         with st.status("Evaluating suppliers...", expanded=True) as status:
-            result = orchestrator.run_evaluation(proposals, terms, settings, reviewer, progress=st.text)
+            result = orchestrator.run_evaluation(proposals, terms, settings, reviewer, priorities, progress=st.text)
             if result.status == repository.RUN_EVALUATED:
                 status.update(label="Evaluation complete", state="complete", expanded=False)
             else:
@@ -296,6 +366,7 @@ def render() -> None:
     st.subheader("New evaluation")
     st.caption("Upload the supplier proposals, say what you are buying, then evaluate. Each file is read for this session only.")
     terms = _purchase_terms(running)
+    priorities = _priorities(running, settings)
     files = _uploaded_files(running)
 
     proposals: list[orchestrator.Proposal] = []
@@ -308,7 +379,7 @@ def render() -> None:
         _show_checks(check)
     else:
         st.session_state.pop(PDF_CACHE_KEY, None)
-        st.info("Upload 1 to 10 supplier proposal PDFs. The submission date is filled in from each PDF (check it), and the "
+        st.info("Upload 2 to 10 supplier proposal PDFs. The submission date is filled in from each PDF (check it), and the "
                 "experience rating is optional. The brief expects at least 4 proposals for a meaningful peer comparison.")
     if settings is None:
         st.info("Before evaluating, choose a provider, validate your API key and pick a model in the sidebar.")
@@ -318,7 +389,7 @@ def render() -> None:
 
     if running:
         if ready:
-            _run(proposals, terms, settings)   # ends with st.rerun()
+            _run(proposals, terms, settings, priorities)   # ends with st.rerun()
         else:
             st.session_state[sidebar.RUN_KEY] = False   # the inputs are no longer valid; never leave the sidebar locked
             st.rerun()

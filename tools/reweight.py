@@ -7,7 +7,10 @@ Plan"; they know what they need. So the Review tab asks one question, "How satis
 * 1 to 3: not satisfied. They say what they are not satisfied with (a plain option, or their own words), the matching criterion
   counts for more in this run, everyone is ranked again from the AI's saved marks, and the new result is shown. At most 3 rounds.
 
-Pure functions only: no I/O, no Streamlit, no LLM, no clock. The Review tab and `agents/orchestrator.py` call these, so the rules are
+Pure functions only: no I/O, no Streamlit, no LLM, no clock.
+
+The same rule is used before a run ("Your priorities" on the New evaluation tab): every ticked criterion gets the +10 once, in the
+order of the marking scheme, so the same ticks always give the same weights (`plan_priorities`). The Review tab and `agents/orchestrator.py` call these, so the rules are
 written once and tested on their own.
 
 The reweight rule (spec 11.2): the chosen criterion's weight becomes min(current + 10, 60); every other weight is scaled by the same
@@ -180,3 +183,87 @@ def describe_reweighting(plan: Reweighting) -> str:
     """One sentence for the screen: which criterion counts for more now, and by how much."""
     t = plan.target
     return f"{t.name} now counts for {percent(t.now)}% of the decision (it was {percent(t.was)}%)."
+
+
+# ---------------------------------------------------------------- "Your priorities" before a run
+
+# What a buyer reads next to each tick box (keyed by the criterion's name in lower case). Any other name is shown as it is.
+PRIORITY_LABELS = {
+    "technical capability": "Better laptops (battery life, speed, build quality)",
+    "implementation plan": "Quicker, more dependable delivery and setup",
+    "commercial value": "A lower price and better commercial terms",
+    "security & compliance": "Stronger security and data protection",
+    "support & experience": "Better warranty, repair and support",
+}
+
+
+def priority_label(name: str) -> str:
+    """The words next to a criterion's tick box."""
+    return PRIORITY_LABELS.get(name.strip().casefold(), name.strip())
+
+
+@dataclass(frozen=True)
+class PriorityPlan:
+    """The weights of one run after the buyer's ticks. `lines` holds every criterion (was, now); `ticked` are the ticks that counted."""
+
+    ticked: tuple[int, ...]
+    lines: tuple[WeightLine, ...]
+    skipped: tuple[str, ...] = ()           # ticked criteria that could not count for more (already at the cap, or nothing to take from)
+    everything_ticked: bool = False         # every criterion was ticked, so none counts for more than another and nothing changes
+
+    @property
+    def changed(self) -> bool:
+        return any(line.was != line.now for line in self.lines)
+
+    def new_weights(self) -> dict[int, float]:
+        return {line.criterion_id: line.now for line in self.lines}
+
+
+def plan_priorities(criteria: Sequence[WeightLike], ticked_ids: Iterable[int]) -> PriorityPlan:
+    """The run's weights when the buyer ticks the criteria that matter more to them.
+
+    Each ticked criterion gets the spec 11.2 rule once (+10 points, at most 60, the others scaled so the total stays 100), one after the
+    other in the order of the marking scheme. Ticks for criteria that are not part of the run are ignored. Ticking every criterion
+    changes nothing: nothing then counts for more than the rest."""
+    wanted = set(ticked_ids)
+    ticked = tuple(c.criterion_id for c in criteria if c.criterion_id in wanted)
+    start = tuple(WeightLine(c.criterion_id, c.name, float(_exact(c.weight)), float(_exact(c.weight))) for c in criteria)
+    if not ticked:
+        return PriorityPlan((), start)
+    if len(ticked) == len(criteria):
+        return PriorityPlan(ticked, start, everything_ticked=True)
+    now = {c.criterion_id: c.weight for c in criteria}
+    counted: list[int] = []
+    skipped: list[str] = []
+    for criterion_id in ticked:
+        current = [_Weight(c.criterion_id, c.name, now[c.criterion_id]) for c in criteria]
+        try:
+            step = plan_reweight(current, criterion_id)
+        except ReviewError:
+            skipped.append(next(c.name for c in criteria if c.criterion_id == criterion_id))
+            continue
+        now = step.new_weights()
+        counted.append(criterion_id)
+    lines = tuple(WeightLine(line.criterion_id, line.name, line.was, now[line.criterion_id]) for line in start)
+    return PriorityPlan(tuple(counted), lines, tuple(skipped))
+
+
+@dataclass(frozen=True)
+class _Weight:
+    criterion_id: int
+    name: str
+    weight: float
+
+
+def describe_priorities(plan: PriorityPlan) -> str:
+    """One sentence for the screen: what the ticks do to the weights."""
+    if plan.everything_ticked:
+        return "Everything is ticked, so nothing counts for more than anything else. The weights stay as they are."
+    if not plan.changed:
+        return "Nothing ticked: every criterion keeps the weight set up in Setup." if not plan.skipped else (
+            f"{', '.join(plan.skipped)} already counts for as much as it can, so the weights stay as they are.")
+    parts = [f"{line.name} {percent(line.was)}% to {percent(line.now)}%" for line in plan.lines if line.was != line.now]
+    text = "With your priorities, for this run only: " + "; ".join(parts) + "."
+    if plan.skipped:
+        text += f" {', '.join(plan.skipped)} already counts for as much as it can."
+    return text

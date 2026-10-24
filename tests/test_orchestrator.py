@@ -148,14 +148,16 @@ def test_a_good_batch_has_no_errors(criteria):
 
 
 def test_no_files_and_too_many_files_are_blocked(criteria):
-    assert orchestrator.check_inputs([], criteria).errors == ("Upload at least one supplier proposal (PDF).",)
+    assert orchestrator.check_inputs([], criteria).errors == ("Upload at least 2 supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated.",)
+    assert orchestrator.check_inputs([proposal("Only")], criteria).errors == ("Upload at least 2 supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated.",)
+    assert orchestrator.check_inputs([proposal("One"), proposal("Two")], criteria).ok
     eleven = [proposal(f"Supplier {i}") for i in range(11)]
     assert orchestrator.check_inputs(eleven, criteria).errors == (
         "You uploaded 11 files, but at most 10 can be evaluated at once. Remove 1.",)
     assert orchestrator.check_inputs(eleven[:10], criteria).ok
 
 
-@pytest.mark.parametrize("count, note", [(1, True), (3, True), (4, False), (7, False)])
+@pytest.mark.parametrize("count, note", [(2, True), (3, True), (4, False), (7, False)])
 def test_fewer_than_four_proposals_get_an_info_note(count, note, criteria):
     check = orchestrator.check_inputs([proposal(f"Supplier {i}") for i in range(count)], criteria)
     assert check.ok and (check.notes == ("The brief expects at least 4 for a meaningful peer comparison.",)) is note
@@ -174,13 +176,13 @@ def test_the_experience_rating_is_optional(criteria):
 
 @pytest.mark.parametrize("rating", [0, 6, -1, True, 3.5, 4.0, 3.0, "4"])
 def test_a_given_experience_rating_must_be_a_whole_number_from_1_to_5(rating, criteria):
-    check = orchestrator.check_inputs([proposal("Acme", experience_rating=rating)], criteria)
+    check = orchestrator.check_inputs([proposal("Acme", experience_rating=rating), proposal("Other")], criteria)
     assert check.errors == ("The experience rating for Acme must be a whole number from 1 to 5, or left empty.",)
 
 
 @pytest.mark.parametrize("rating", [1, 2, 3, 4, 5])
 def test_all_five_ratings_are_accepted(rating, criteria):
-    assert orchestrator.check_inputs([proposal("Acme", experience_rating=rating)], criteria).ok
+    assert orchestrator.check_inputs([proposal("Acme", experience_rating=rating), proposal("Other")], criteria).ok
 
 
 def test_duplicate_names_are_refused_ignoring_capitals_and_spaces(criteria):
@@ -205,9 +207,9 @@ def test_all_problems_are_listed_together(criteria):
 
 def test_the_weights_must_total_100_and_a_criterion_must_be_active(criteria):
     heavy = [dataclasses.replace(c, weight=c.weight + (5 if c.criterion_id == 1 else 0)) for c in criteria]
-    error = orchestrator.check_inputs([proposal("A")], heavy).errors
+    error = orchestrator.check_inputs([proposal("A"), proposal("B")], heavy).errors
     assert error == ("The active criteria weights total 105, not 100. Fix them in Setup before evaluating.",)
-    assert orchestrator.check_inputs([proposal("A")], []).errors == (
+    assert orchestrator.check_inputs([proposal("A"), proposal("B")], []).errors == (
         "There are no active criteria. Turn at least one on in Setup before evaluating.",)
 
 
@@ -495,10 +497,10 @@ def test_the_audit_log_tells_the_story_in_order():
 def test_validation_warnings_go_to_the_audit_log():
     broken = json.loads(reply("Apex Systems"))
     broken["criteria"][0]["score"] = 12
-    result, _, _ = run(["Apex Systems"], ok_response(json.dumps(broken)))
+    result, _, _ = run(["Apex Systems", "NexaWorks"], ok_response(json.dumps(broken)), ok_response(reply("NexaWorks")))
     event = json.loads(rows("SELECT details_json FROM audit_log WHERE action = 'validation_warnings'")[0][0])
     assert event["supplier"] == "Apex Systems" and any("12" in w for w in event["warnings"])
-    assert any("12" in w for w in result.suppliers[0].warnings)
+    assert any("12" in w for w in next(x for x in result.suppliers if x.name == "Apex Systems").warnings)
 
 
 def test_the_step_log_is_given_live_and_returned():
@@ -526,10 +528,11 @@ def test_upload_order_does_not_change_the_ranking():
     assert {s.name: s.rank for s in forward.suppliers} == {s.name: s.rank for s in backward.suppliers}
 
 
-def test_one_supplier_is_allowed_with_a_warning():
-    result, _, _ = run(["Apex Systems"])
-    assert result.status == "Evaluated" and result.suppliers[0].ppi == 100.0
-    assert any("Only one supplier" in w for w in result.suppliers[0].warnings)
+def test_one_supplier_is_not_evaluated_because_there_is_nothing_to_compare_it_with():
+    result, backend, _ = run(["Apex Systems"])
+    assert (result.status, result.run_id, backend.calls) == ("Blocked", "", [])
+    assert result.message == "The run was not started: Upload at least 2 supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated."
+    assert rows("SELECT COUNT(*) FROM rfp_runs") == [(0,)]
 
 
 # ---------------------------------------------------------------- the model, the key and the buyer's numbers
@@ -556,24 +559,24 @@ def test_the_proposal_text_itself_is_not_saved():
 
 def test_the_runs_budget_and_quantity_reach_the_model_and_the_price_grade():
     tight = industry.PurchaseTerms(budget_rs=2500000, quantity=50)   # Rs 50,000 per laptop
-    _, backend, _ = run(["Apex Systems"], terms=tight)
+    _, backend, _ = run(["Apex Systems", "NexaWorks"], terms=tight)
     sent = backend.calls[0]["messages"][1]["content"]
     assert "Quantity: 50 laptops, one model" in sent and "About Rs 25,00,000" in sent
     assert rows("SELECT budget_rs, quantity FROM rfp_runs") == [(2500000.0, 50)]
 
     def price_grade() -> str:
-        detail = json.loads(rows("SELECT result_json FROM supplier_results ORDER BY rowid DESC")[0][0])
+        detail = json.loads(rows("SELECT result_json FROM supplier_results WHERE supplier_name = 'Apex Systems' ORDER BY rowid DESC")[0][0])
         return next(a["grade"] for a in detail["industry_breakdown"]["attributes"] if a["attribute_key"] == "unit_price")
 
     # Apex quotes Rs 59,000 per laptop: over a Rs 50,000 budget per laptop, but inside the usual Rs 60,000 one
     assert price_grade() == "Below"
-    run(["Apex Systems"], token=lambda: "ee55")
+    run(["Apex Systems", "NexaWorks"], token=lambda: "ee55")
     assert price_grade() == "Meets"
 
 
 def test_a_provider_like_anthropic_is_called_with_its_prefix():
-    backend = FakeBackend(ok_response(reply("Apex Systems")))
-    result = orchestrator.run_evaluation([proposal("Apex Systems")], TERMS, client.LLMSettings("Anthropic", "claude-x", "test-key-z"),
+    backend = FakeBackend(ok_response(reply("Apex Systems")), ok_response(reply("NexaWorks")))
+    result = orchestrator.run_evaluation([proposal("Apex Systems"), proposal("NexaWorks")], TERMS, client.LLMSettings("Anthropic", "claude-x", "test-key-z"),
                                          backend=backend, sleep=lambda _s: None, now=lambda: NOW, token=lambda: "ab12")
     assert result.status == "Evaluated" and backend.calls[0]["model"] == "anthropic/claude-x"
     assert rows("SELECT provider, model, reviewer_name FROM rfp_runs") == [("Anthropic", "claude-x", "")]

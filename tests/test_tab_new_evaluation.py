@@ -131,7 +131,7 @@ def test_the_tab_starts_with_the_meridian_budget_and_quantity():
 
 def test_with_nothing_uploaded_it_explains_what_to_do_and_the_button_is_off():
     app = start()
-    assert "Upload 1 to 10 supplier proposal PDFs" in texts(tab(app), "info")
+    assert "Upload 2 to 10 supplier proposal PDFs" in texts(tab(app), "info")
     assert "choose a provider, validate your API key and pick a model in the sidebar" in texts(tab(app), "info")
     assert tab(app).button(key="ne_evaluate").disabled
     assert not tab(app).dataframe and not tab(app).error
@@ -213,6 +213,14 @@ def test_fewer_than_four_proposals_show_the_information_note(uploaded, monkeypat
     monkeypatch.setattr(tab_new_evaluation, "_uploaded_files", lambda disabled: uploaded[:2])
     app = start()
     assert "The brief expects at least 4 for a meaningful peer comparison." in texts(tab(app), "info")
+
+
+@needs_pdf_reader
+def test_one_proposal_alone_is_refused_and_the_button_stays_off(uploaded, monkeypatch):
+    monkeypatch.setattr(tab_new_evaluation, "_uploaded_files", lambda disabled: uploaded[:1])
+    app = start()
+    assert "Upload at least 2 supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated." in texts(tab(app), "error")
+    assert tab(app).button(key="ne_evaluate").disabled
 
 
 @needs_pdf_reader
@@ -333,3 +341,20 @@ def test_each_step_has_a_wing_drawn_in_its_own_colour():
 def test_supplier_names_cannot_inject_html_into_the_podium():
     text = tab_new_evaluation.podium_html(tab_new_evaluation.podium([summary("<script>alert(1)</script>", 1)]))
     assert "<script>" not in text and "&lt;script&gt;" in text
+
+
+# ---------------------------------------------------------------- your priorities (before a run)
+
+def test_the_priorities_box_has_a_tick_for_each_criterion_and_says_nothing_changes_until_ticked():
+    app = start()
+    assert not app.exception
+    assert [tab(app).checkbox(key=f"ne_prio_{i}").value for i in range(1, 6)] == [False] * 5
+    assert "Nothing ticked: every criterion keeps the weight set up in Setup." in texts(tab(app), "caption")
+
+
+def test_ticking_a_criterion_shows_the_new_weights_for_this_run_only():
+    app = start()
+    tab(app).checkbox(key="ne_prio_3").check().run()
+    assert not app.exception
+    assert "Commercial Value 20% to 30%" in texts(tab(app), "caption")
+    assert "for this run only" in texts(tab(app), "caption")

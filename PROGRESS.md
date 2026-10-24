@@ -36,7 +36,8 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | F16 | Pros and cons | Approved | 2026-10-24 | Python still chooses the points (R1a); one AI call per supplier words them (prompts/summarizer_system.md = spec 7.3, agents/summarizer.py) and writes the recommendation reason; Python checks counts, length and other supplier names, falls back to the template text per line; wording saved by point key, survives a re-rank; "Why:" line on the Overview banner; JSON file uses the AI words; failures never stop a run. 83 new tests; 57 of 57 deliberate breaks caught | 0 |
 | F17 | Price vs budget bar | Approved | 2026-10-24 | Overview chart before the strength table: one bar per supplier with a total, teal within budget, pink over, dashed line at the run budget; no-total suppliers named; 8 new tests; 14 of 14 deliberate breaks caught | 0 |
 | F18 | Analysis tab | Approved | 2026-10-24 | Heatmap, price vs quality scatter, what-if lines plus table tagging where the leader changes (insights.what_if, spec 10.3); 48 new tests; 30 of 30 deliberate breaks caught | Scatter budget line uses the run's budget (DECISIONS 69) | |
-| F19 | "Not happy?" flow | Not started | | | |
+| F19 | "Not happy?" flow | Replaced | 2026-10-24 | Already built as F13 (Review tab). What was left became "Your priorities" before a run (tick boxes + typed sentence on New evaluation); unused re_evaluate removed | 0 |
+| Priorities | Your priorities (before a run) | Approved | 2026-10-24 | Tick boxes and a typed sentence read by the AI and confirmed by the buyer; +10 per tick (cap 60, total 100), this run only; saved with the run and audited; tests: 52 + 13 new | 0 |
 | F20 | Negotiation suggestions | Not started | | Budget points use the run's budget (DECISIONS 69) | |
 | F21 | Audit: history and trail | Not started | | | |
 | M3 | Milestone: push | Not started | | | |

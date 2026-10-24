@@ -98,12 +98,13 @@ def pdf_for(name: str) -> pdf_tool.ExtractedPdf:
     return pdf_tool.ExtractedPdf(sha256=hashlib.sha256(name.encode()).hexdigest(), pages=(text,), backend="pypdf")
 
 
-def evaluated_run(rows=FIVE, facts: dict[str, dict[str, Any]] | None = None) -> orchestrator.RunResult:
+def evaluated_run(rows=FIVE, facts: dict[str, dict[str, Any]] | None = None,
+                  priorities: orchestrator.PriorityRequest | None = None) -> orchestrator.RunResult:
     """A real run of the pipeline over `rows`, with a fake model that gives each supplier its prepared marks."""
     facts = facts or {"BrightPath Tech": BAD_FACTS}
     proposals = [orchestrator.Proposal(f"{n.lower().replace(' ', '_')}.pdf", n, when, rating, pdf_for(n)) for n, when, rating, _s in rows]
     backend = FakeBackend(*[reply(scores, facts.get(n, GOOD_FACTS)) for n, _w, _r, scores in rows])
-    result = orchestrator.run_evaluation(proposals, TERMS, SETTINGS, "Sri", backend=backend, sleep=lambda _s: None, now=lambda: START)
+    result = orchestrator.run_evaluation(proposals, TERMS, SETTINGS, "Sri", priorities, backend=backend, sleep=lambda _s: None, now=lambda: START)
     assert result.status == "Evaluated", result.message
     return result
 

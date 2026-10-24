@@ -104,6 +104,8 @@ def test_the_heatmap_figure_uses_the_light_to_dark_theme_scale_and_prints_the_ma
     assert [stop[1] for stop in trace.colorscale] == [theme.HEATMAP_LOW, theme.HEATMAP_HIGH]
     assert trace.zmin == 0 and trace.zmax == 100 and list(trace.z[0]) == [90.0, 70.0, 50.0, 90.0, 80.0]
     notes = figure.layout.annotations
+    assert list(trace.x) == list(fixture_analysis().heatmap.criteria) and list(trace.y) == [n for n, *_ in FIXTURE]       # criteria across, suppliers down
+    assert figure.layout.yaxis.autorange == "reversed"                                                                       # best rank on top
     assert len(notes) == 25 and notes[0]["text"] == "9"
     assert notes[0]["font"]["color"] == "#FFFFFF" and notes[2]["font"]["color"] == theme.TEXT      # dark cell: white number, light cell: dark number
 
@@ -298,6 +300,14 @@ def test_the_page_says_why_a_chart_is_missing():
     odd = entry("Apex", (9,) * 5, "2026-10-05", 3, 1)
     odd["result"]["criteria"] = odd["result"]["criteria"][:2] + odd["result"]["criteria"][3:]
     assert tab_analysis.NO_WHAT_IF_TEXT in "".join(texts(drawn(analysis_of(odd))))
+
+
+def test_the_page_says_when_a_supplier_was_left_out_of_the_what_if_and_stays_quiet_otherwise():
+    short = entry("Short", (5,) * 5, "2026-10-06", 3, 2)
+    short["result"]["criteria"] = short["result"]["criteria"][:4]
+    joined = "".join(texts(drawn(analysis_of(entry("Apex", (9,) * 5, "2026-10-05", 3, 1), short))))
+    assert "Left out of this comparison because their marks do not cover the same criteria: Short." in joined
+    assert "Left out of this comparison" not in "".join(texts(drawn(fixture_analysis())))
 
 
 def test_the_page_names_suppliers_without_a_total_or_marks():

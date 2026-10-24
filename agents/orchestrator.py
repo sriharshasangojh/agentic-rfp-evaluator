@@ -11,8 +11,7 @@ answers from them only. Scoring never uses that search.
 
 The second half of the file is the human review (F13, spec section 11): the person says how satisfied they are with the
 recommendation (1 to 5). Satisfied: accept it. Not satisfied: they say what they are not satisfied with, the matching criterion
-counts for more in this run and every supplier is ranked again from the AI's saved marks (twice at most). `re_evaluate`, which asks
-the AI to read one supplier again with a comment, is kept for the "a score looks wrong" case (F19). Every step adds rows to the
+counts for more in this run and every supplier is ranked again from the AI's saved marks (three rounds at most). Every step adds rows to the
 history tables; nothing is ever overwritten (the current result is updated, the decisions and audit rows stay).
 
 Rules kept here:
@@ -46,6 +45,7 @@ from tools import gates as gates_tool
 from tools import evidence_checker, industry, insights, pdf_tool, ranking, retrieval, review, reweight
 
 MAX_PROPOSALS = 10
+MIN_PROPOSALS = 2          # a ranking compares suppliers, so one proposal is not evaluated
 RECOMMENDED_MINIMUM = 4
 EXPERIENCE_RATINGS = (1, 2, 3, 4, 5)
 BLOCKED = "Blocked"        # the inputs were not acceptable; nothing was created
@@ -77,6 +77,68 @@ class InputCheck:
         return not self.errors
 
 
+@dataclass(frozen=True)
+class TypedPriority:
+    """One sentence the buyer wrote about what matters to them, and what the AI made of it (confirmed by the buyer before the run)."""
+
+    text: str
+    criterion_id: int
+    reading: str
+    tokens: int | None = None
+    cost_usd: float | None = None
+    attempts: int = 1
+
+
+@dataclass(frozen=True)
+class PriorityRequest:
+    """"Your priorities" for one run: the criteria the buyer ticked and the sentences the AI read. Applies to this run only."""
+
+    ticked: tuple[int, ...] = ()
+    typed: tuple[TypedPriority, ...] = ()
+
+
+@dataclass(frozen=True)
+class PriorityReading:
+    """What the AI made of a sentence typed before a run. `ok` means it proposes to raise `criterion_id`; nothing is changed by reading."""
+
+    ok: bool
+    message: str
+    typed: TypedPriority | None = None
+
+
+PRIORITY_UNCLEAR = ("I could not match that to a criterion that matters more. Tick the criteria that matter more to you, "
+                    "or write it a different way.")
+
+
+def understand_priority(
+    text: str, settings: client.LLMSettings, *,
+    backend: client.Backend | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> PriorityReading:
+    """The buyer wrote what matters to them before a run. The AI proposes ONE criterion that should count for more (spec 7.5); the
+    buyer confirms it before anything changes, and the call's tokens and cost are added to the run when it starts. Nothing is saved here."""
+    try:
+        need = reweight.clean_need(text)
+        if not need:
+            return PriorityReading(False, "Write what matters to you first.")
+        if settings.key_is_in(need):
+            return PriorityReading(False, "What you wrote contains your API key. Remove it and try again. Nothing was sent.")
+        with repository.connection() as conn:
+            criteria = repository.list_criteria(conn, active_only=True)
+        try:
+            reading = feedback.interpret(need, criteria, settings, backend=backend, sleep=sleep)
+        except client.LLMError as exc:
+            return PriorityReading(False, f"The AI could not be reached: {exc.user_message} Nothing was changed.")
+        except feedback.FeedbackError as exc:
+            return PriorityReading(False, f"{exc.user_message} Nothing was changed.")
+    except (sqlite3.Error, OSError):
+        return PriorityReading(False, "The criteria could not be read because the database was busy. Wait a few seconds and try again.")
+    if reading.action == "reweight" and reading.criterion_id is not None:
+        return PriorityReading(True, "", TypedPriority(need, reading.criterion_id, reading.reading, reading.tokens, reading.cost_usd,
+                                                       reading.attempts))
+    return PriorityReading(False, PRIORITY_UNCLEAR if reading.readable else f"The AI's reply could not be read. {PRIORITY_UNCLEAR}")
+
+
 def read_pdf(data: bytes) -> tuple[pdf_tool.ExtractedPdf | None, str | None]:
     """Read an uploaded PDF. Returns (pdf, None), or (None, a friendly reason)."""
     try:
@@ -90,8 +152,8 @@ def check_inputs(proposals: Sequence[Proposal], criteria: Sequence[repository.Cr
     errors: list[str] = []
     notes: list[str] = []
     count = len(proposals)
-    if count == 0:
-        errors.append("Upload at least one supplier proposal (PDF).")
+    if count < MIN_PROPOSALS:
+        errors.append(f"Upload at least {MIN_PROPOSALS} supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated.")
     elif count > MAX_PROPOSALS:
         errors.append(f"You uploaded {count} files, but at most {MAX_PROPOSALS} can be evaluated at once. Remove {count - MAX_PROPOSALS}.")
     elif count < RECOMMENDED_MINIMUM:
@@ -326,6 +388,7 @@ def run_evaluation(
     terms: industry.PurchaseTerms,
     settings: client.LLMSettings,
     reviewer_name: str = "",
+    priorities: PriorityRequest | None = None,
     *,
     progress: Callable[[str], None] | None = None,
     backend: client.Backend | None = None,
@@ -352,6 +415,15 @@ def run_evaluation(
     if not check.ok:
         return RunResult("", BLOCKED, "The run was not started: " + check.errors[0], errors=check.errors)
 
+    # "Your priorities": the ticked criteria count for more in THIS run; the marking scheme in Setup is not changed (the AI's
+    # marks do not depend on the weights, so the same marks are simply weighted differently).
+    request = priorities or PriorityRequest()
+    plan = reweight.plan_priorities(criteria, request.ticked)
+    if plan.changed:
+        new_weights = plan.new_weights()
+        criteria = [replace(c, weight=new_weights[c.criterion_id]) for c in criteria]
+    kept_typed = tuple(t for t in request.typed if t.criterion_id in plan.ticked)    # a sentence whose tick was removed is dropped
+
     moment = now()
     run_id = make_run_id(moment, token())
     names = [p.supplier_name.strip() for p in proposals]
@@ -370,8 +442,8 @@ def run_evaluation(
         return RunResult(run_id, status, message, steps=tuple(steps), tokens=_total(token_counts),
                          cost_usd=_total(costs), duration_seconds=round(clock() - started, 2))
 
-    token_counts: list[int | None] = []
-    costs: list[float | None] = []
+    token_counts: list[int | None] = [t.tokens for t in kept_typed]    # the calls that read the typed sentences are part of this run's cost
+    costs: list[float | None] = [t.cost_usd for t in kept_typed]
     created = False
     try:
         log(f"Checked inputs: {len(proposals)} proposal(s), criteria weights total {total_weight:g}, "
@@ -391,6 +463,18 @@ def run_evaluation(
                 "reviewer_name": reviewer_name.strip(), "suppliers": names})
         created = True   # only once the row is really saved
         log(f"Created run {run_id}.")
+        if plan.ticked or request.typed:
+            with repository.connection() as conn:
+                for t in kept_typed:
+                    audit.log_event(conn, run_id, "AI", "need_interpreted", {
+                        "text": t.text, "action": "reweight", "criterion_id": t.criterion_id, "reading": t.reading, "readable": True,
+                        "llm_calls": t.attempts, "model": settings.model, "provider": settings.provider, "tokens": t.tokens,
+                        "cost_usd": t.cost_usd, "before_run": True})
+                audit.log_event(conn, run_id, reviewer_name.strip() or REVIEWER, "priorities_set", {
+                    "ticked": list(plan.ticked), "skipped": list(plan.skipped), "everything_ticked": plan.everything_ticked,
+                    "typed": [{"text": t.text, "criterion_id": t.criterion_id, "reading": t.reading} for t in kept_typed],
+                    "weights": [{"criterion_id": l.criterion_id, "name": l.name, "was": l.was, "now": l.now} for l in plan.lines]})
+            log(reweight.describe_priorities(plan))
 
         # --- read the documents
         with repository.connection() as conn:
@@ -713,150 +797,6 @@ def _breakdown(industry_for: industry.IndustryResult) -> dict[str, Any]:
     return {"score": industry_for.score,
             "attributes": [{"attribute_key": a.attribute_key, "label": a.label, "grade": a.grade, "points": a.points,
                             "weight": a.weight, "reason": a.reason} for a in industry_for.attributes]}
-
-
-def _re_evaluated_result(old: dict[str, Any], outcome: evaluator.EvaluationOutcome, criteria: Sequence[RunCriterion],
-                         gate_results: Sequence[gates_tool.GateResult], industry_for: industry.IndustryResult) -> dict[str, Any]:
-    """The supplier's saved result with everything the new evaluation decides replaced: marks, reasons, evidence, facts, must-haves,
-    industry grade, risks and warnings. The marks' benchmark, gap and relative % are filled in when everyone is re-ranked."""
-    card = outcome.scorecard
-    by_id = {c.criterion_id: c for c in card.criteria}
-    result = dict(old)
-    result.update(
-        eligible=gates_tool.is_eligible(gate_results), gates=gates_tool.gate_status(gate_results),
-        gate_details=[{"gate_id": g.gate_id, "name": g.name, "passed": g.passed, "reason": g.reason} for g in gate_results],
-        criteria=[{"criterion_id": c.criterion_id, "name": c.name, "score": by_id[c.criterion_id].score, "max_score": c.max_score,
-                   "benchmark": 0.0, "gap": 0.0, "relative_pct": 0.0, "weight": c.weight, "strength": "",
-                   "justification": by_id[c.criterion_id].justification, "evidence": by_id[c.criterion_id].evidence,
-                   "evidence_found": None, "filled_by_validator": by_id[c.criterion_id].filled_by_validator} for c in criteria],
-        extracted_facts=card.extracted_facts.model_dump(), industry_score=industry_for.score,
-        industry_breakdown=_breakdown(industry_for),
-        risks=list(card.risks), overall_summary=card.overall_summary, warnings=[*outcome.warnings, *industry_for.warnings],
-        evaluation_failed=outcome.failed)
-    return result
-
-
-def re_evaluate(
-    run_id: str, supplier_name: str, criterion_id: int | None, comment: str,
-    proposal: pdf_tool.ExtractedPdf, settings: client.LLMSettings, actor: str = REVIEWER,
-    *,
-    backend: client.Backend | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-) -> ReviewOutcome:
-    """Ask the AI to evaluate ONE supplier again, with the reviewer's comment in <reviewer_feedback> (spec 11.1 rules 3 and 4).
-    The Review tab does not call this: it is the "a score looks wrong" case of the "Not happy?" flow (F19).
-
-    At most 2 times per supplier. The new marks become the supplier's current marks, its must-haves and industry grade are worked
-    out again from the new facts, and EVERY supplier is re-ranked (the benchmarks depend on everyone). The proposal must be the
-    very file that was evaluated (same SHA-256 fingerprint). Nothing is written until the AI's answer is in and usable, and then
-    everything is written in one go: a reply that cannot be read, a provider problem or a stopped script changes nothing and does
-    not use up one of the 2. Evidence checking joins here in F15 (spec 9.2).
-    """
-    who = actor or REVIEWER
-    log_run_id = run_id
-
-    def failure(reason: str, kind: str, outcome: evaluator.EvaluationOutcome | None = None) -> ReviewOutcome:
-        try:
-            with repository.connection() as conn:
-                audit.log_event(conn, log_run_id, "AI", "re_evaluation_failed", {
-                    "supplier": supplier_name, "criterion_id": criterion_id, "kind": kind, "model": settings.model,
-                    "provider": settings.provider, "tokens": outcome.tokens if outcome else None})
-                if outcome is not None:
-                    repository.add_to_run_totals(conn, log_run_id, outcome.tokens, outcome.cost_usd)
-        except (sqlite3.Error, OSError):
-            pass
-        return ReviewOutcome(False, reason)
-
-    try:
-        text = review.clean_text(comment)
-        if not text:
-            raise review.ReviewError("Write a comment that says what looks wrong, so the AI knows what to look at again.")
-        with repository.connection() as conn:
-            state = _load_state(conn, run_id)
-            attempt = repository.current_attempt_no(conn, run_id, supplier_name)
-            documents = {d.supplier_name: d for d in repository.list_documents(conn, run_id)}
-            all_gates = repository.list_gates(conn, state.run.template_id)
-            benchmarks = repository.list_benchmarks(conn, state.run.template_id)
-        stored = state.supplier(supplier_name)
-        criterion = state.criterion(criterion_id) if criterion_id is not None else None
-        if attempt < 1:
-            raise review.ReviewError(f"{supplier_name} has no saved evaluation to look at again.")
-        if review.re_evaluations_left(attempt) <= 0:
-            raise review.ReviewError(f"The AI has already looked at {supplier_name} again {review.MAX_RE_EVALUATIONS} times.")
-        document = documents.get(supplier_name)
-        if document is None or document.sha256 != proposal.sha256:
-            raise review.ReviewError(f"This is not the proposal that was evaluated for {supplier_name} (the fingerprints differ). "
-                                     "Upload the same file again on the New evaluation tab.")
-        if not proposal.has_text:
-            raise review.ReviewError("This proposal has no readable text, so it cannot be evaluated again.")
-        terms = _terms_of(state.run)
-        old_results = {n: s.result for n, s in state.suppliers.items()}
-        old_ranked = _rank_inputs(state, old_results)
-        before = _board(state.suppliers)
-
-        feedback = review.feedback_for_prompt(criterion_id, criterion.name if criterion else None, text)
-        try:
-            outcome = evaluator.evaluate_supplier(supplier_name, proposal.text, state.criteria, terms, settings,
-                                                  reviewer_feedback=feedback, backend=backend, sleep=sleep)
-        except client.LLMError as exc:
-            return failure(f"The AI could not be reached: {exc.user_message} Nothing was changed.", exc.kind)
-        except evaluator.EvaluatorError as exc:
-            return failure(f"{exc.user_message} Nothing was changed.", "evaluator")
-        if outcome.failed:
-            return failure("The AI's reply could not be read, so nothing was changed. This did not use up one of the "
-                           f"{review.MAX_RE_EVALUATIONS} re-evaluations. Try again.", "unreadable_reply", outcome)
-
-        facts = outcome.scorecard.extracted_facts.model_dump()
-        saved_gates = {g.get("gate_id") for g in stored.result.get("gate_details") or [] if isinstance(g, dict)}
-        gate_list = [g for g in all_gates if g.gate_id in saved_gates] or [g for g in all_gates if g.is_active]
-        gate_results = gates_tool.evaluate_gates(gate_list, facts)
-        industry_for = industry.industry_score(facts, benchmarks, state.criteria, terms)
-        results = dict(old_results)
-        results[supplier_name] = _re_evaluated_result(stored.result, outcome, state.criteria, gate_results, industry_for)
-        ranked = _rank_inputs(state, results)
-        new_results = review.apply_ranking(results, ranked, old_ranked.warnings)
-        eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
-        eligible[supplier_name] = gates_tool.is_eligible(gate_results)
-        after = review.standings(ranked, eligible)
-        ids = [c.criterion_id for c in state.criteria]
-        old_scores, new_scores = review.scores_of(stored.result, ids), review.scores_of(results[supplier_name], ids)   # the marks that count
-        changes = [{"criterion_id": c.criterion_id, "name": c.name, "old": old_scores[c.criterion_id], "new": new_scores[c.criterion_id]}
-                   for c in state.criteria]
-        rank_before, rank_after = review.movement(before, after, supplier_name)
-        new_attempt = attempt + 1
-        created = _iso(now())
-        rows = [repository.AttemptRow(c.criterion_id, c.score, c.justification, c.evidence, None, outcome.raw_reply if i == 0 else None)
-                for i, c in enumerate(outcome.scorecard.criteria)]
-        with repository.connection() as conn:
-            if repository.current_attempt_no(conn, run_id, supplier_name) != attempt:
-                raise review.ReviewError(f"{supplier_name} was changed in another window. Reload the page and try again.")
-            repository.add_attempt(conn, run_id, supplier_name, new_attempt, rows, created)
-            repository.add_feedback(
-                conn, run_id, action=repository.ACTION_RE_EVALUATE, created_at=created, supplier_name=supplier_name,
-                criterion_id=criterion_id, attempt_no=new_attempt, comment=text,
-                details={"from_attempt": attempt, "to_attempt": new_attempt, "changes": changes, "before": before, "after": after,
-                         "rank_before": rank_before, "rank_after": rank_after, "recommended_before": review.recommended_of(before),
-                         "recommended_after": review.recommended_of(after), "model": settings.model, "provider": settings.provider,
-                         "tokens": outcome.tokens, "cost_usd": outcome.cost_usd, "by": who})
-            _save_ranking(conn, run_id, state, ranked, new_results, eligible, {supplier_name: industry_for.score})
-            repository.add_to_run_totals(conn, run_id, outcome.tokens, outcome.cost_usd)
-            audit.log_event(conn, run_id, "AI", "supplier_re_evaluated", {
-                "supplier": supplier_name, "criterion_id": criterion_id, "from_attempt": attempt, "attempt_no": new_attempt,
-                "model": settings.model, "provider": settings.provider, "llm_calls": outcome.attempts, "tokens": outcome.tokens,
-                "cost_usd": outcome.cost_usd, "requested_by": who, "feedback": text, "changes": changes,
-                "rank_before": rank_before, "rank_after": rank_after})
-            if outcome.warnings:
-                audit.log_event(conn, run_id, "AI", "validation_warnings", {"supplier": supplier_name, "warnings": list(outcome.warnings)})
-            audit.log_event(conn, run_id, "system", "gate_results", {
-                "supplier": supplier_name, "gates": gates_tool.gate_status(gate_results),
-                "failed": [f"{g.name}: {g.reason}" for g in gates_tool.failed_gates(gate_results)]})
-            _log_ranking(conn, run_id, ranked, f"re-evaluation of {supplier_name}")
-        parts = [f"Re-evaluated {supplier_name} (attempt {new_attempt}).", review.describe_changes(changes),
-                 review.describe_move(supplier_name, rank_before, rank_after)]
-        return ReviewOutcome(True, " ".join(p for p in parts if p))
-    except (review.ReviewError, sqlite3.Error, OSError) as error:
-        return _failed_outcome(error)
 
 
 # ---------------------------------------------------------------- satisfaction: accept, or change the priorities (spec 11.2)
