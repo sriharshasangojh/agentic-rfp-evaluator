@@ -558,3 +558,55 @@ def list_negotiations(conn: sqlite3.Connection, run_id: str) -> list[Negotiation
         points = [p for p in listed if isinstance(p, dict)] if isinstance(listed, list) else []
         found.append(NegotiationRecord(row["id"], row["supplier_name"], points, row["created_at"], fit))
     return found
+
+
+# ---------------------------------------------------------------- the Audit tab: history, quality and trail (F21)
+
+@dataclass(frozen=True)
+class RunSummary:
+    """What the run history needs about one run: the run row, who would be recommended, and how many suppliers it had."""
+
+    run: RunRecord
+    winner: str | None              # the best-ranked supplier that met every must-have (None when none did)
+    suppliers: int
+    changed_priorities: bool        # the person used at least one round of "not satisfied"
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    timestamp: str
+    actor: str
+    action: str
+    details: dict[str, Any]
+
+
+def list_run_summaries(conn: sqlite3.Connection) -> list[RunSummary]:
+    """Every run, newest first, with its winner. Only runs that were evaluated (or finished) have one; a failed run has none."""
+    runs = []
+    for row in conn.execute("SELECT rfp_run_id FROM rfp_runs ORDER BY created_at DESC, rfp_run_id DESC").fetchall():
+        run = get_run(conn, row["rfp_run_id"])
+        if run is not None:
+            runs.append(run)
+    best: dict[str, str] = {}
+    count: dict[str, int] = {}
+    for row in conn.execute("SELECT rfp_run_id, supplier_name, final_rank, gates_passed FROM supplier_results ORDER BY final_rank, supplier_name"):
+        count[row["rfp_run_id"]] = count.get(row["rfp_run_id"], 0) + 1
+        if row["gates_passed"] and row["rfp_run_id"] not in best:
+            best[row["rfp_run_id"]] = row["supplier_name"]
+    changed = {r["rfp_run_id"] for r in conn.execute("SELECT DISTINCT rfp_run_id FROM reviewer_feedback WHERE action = ?", (ACTION_REWEIGHT,))}
+    return [RunSummary(run, best.get(run.rfp_run_id), count.get(run.rfp_run_id, 0), run.rfp_run_id in changed) for run in runs]
+
+
+def evidence_counts(conn: sqlite3.Connection) -> tuple[int, int]:
+    """(quotes not found in the proposal, quotes checked), across every stored attempt of every run."""
+    row = conn.execute("SELECT COALESCE(SUM(evidence_found = 0), 0) AS missing, COUNT(evidence_found) AS checked FROM evaluation_attempts").fetchone()
+    return int(row["missing"]), int(row["checked"])
+
+
+def list_events(conn: sqlite3.Connection, run_id: str) -> list[AuditEvent]:
+    """The audit trail of one run, oldest first."""
+    found: list[AuditEvent] = []
+    for row in conn.execute("SELECT timestamp, actor, action, details_json FROM audit_log WHERE rfp_run_id = ? ORDER BY id", (run_id,)):
+        details = _json_object(row["details_json"])
+        found.append(AuditEvent(row["timestamp"], row["actor"], row["action"], details if isinstance(details, dict) else {}))
+    return found

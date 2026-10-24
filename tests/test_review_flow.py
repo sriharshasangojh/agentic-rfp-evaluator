@@ -620,7 +620,8 @@ def test_after_all_three_rounds_a_person_who_is_still_not_satisfied_may_accept_a
     assert priorities(run_id, clock, round_no=1).ok and priorities(run_id, clock, criterion=TECH, round_no=2).ok
     assert priorities(run_id, clock, criterion=SECURITY, round_no=3).ok
     out = accept(run_id, clock, satisfaction=2, round_no=4)
-    assert out.ok and out.message == "You accepted Apex Systems. This evaluation is now final."
+    assert out.ok and out.message.endswith("You accepted Apex Systems. This evaluation is now final.")
+    assert out.message.startswith("You were not satisfied after all 3 rounds, so the final recommendation is the best fit with the original weights")
     details = json.loads(rows("SELECT details_json FROM reviewer_feedback WHERE action = 'accept'")[0]["details_json"])
     assert (details["accepted_anyway"], details["rounds_used"], details["satisfaction"]) == (True, 3, 2)
     assert json.loads(rows("SELECT details_json FROM audit_log WHERE action = 'recommendation_accepted'")[0]["details_json"])["accepted_anyway"] is True
@@ -687,7 +688,7 @@ def test_the_call_is_logged_and_its_cost_is_added_to_the_run(run_id):
     assert event["actor"] == "AI"
     assert json.loads(event["details_json"]) == {
         "text": NEED, "action": "reweight", "criterion_id": TECH, "reading": READING, "readable": True, "llm_calls": 1,
-        "model": "test-model", "provider": "OpenAI", "tokens": 1000, "cost_usd": 0.01, "requested_by": "Asha"}
+        "model": "test-model", "provider": "OpenAI", "tokens": 1000, "cost_usd": 0.01, "requested_by": "Asha", "leaning": None}
     assert KEY not in whole_database()
 
 

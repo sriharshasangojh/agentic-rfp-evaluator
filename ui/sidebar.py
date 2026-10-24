@@ -109,4 +109,4 @@ def render_sidebar() -> None:
         with st.container(key="side_run"):
             st.subheader("Evaluation run")
             st.caption("Scoring temperature: 0 (fixed for reproducible results)")
-            st.text_input("Reviewer name", key="reviewer_name")
+            st.text_input("Reviewer name (required)", key="reviewer_name", help="Your name is saved with every decision in the audit trail, so it is needed before you evaluate.")

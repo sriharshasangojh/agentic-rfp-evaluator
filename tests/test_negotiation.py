@@ -207,6 +207,7 @@ def run_with_gaps(rounds: bool = True):
     result = evaluated_run(facts=facts)
     if rounds:
         use_up_the_rounds(result.run_id)
+        orchestrator.restore_original(result.run_id)   # after every round and no satisfaction the run goes back to the original best fit
     return result
 
 
@@ -222,6 +223,7 @@ def test_the_points_come_from_the_final_suppliers_own_saved_result_and_the_runs_
 
 def test_the_final_pick_is_python_s_and_has_to_meet_every_must_have():
     result = run_with_gaps()
+    orchestrator.restore_original(result.run_id)         # what the first press of the button does after every round was used
     final = final_of(result.run_id)
     assert final != BRIGHT
     out = orchestrator.suggest_negotiation(result.run_id, BRIGHT)
@@ -267,6 +269,7 @@ def test_a_criterion_asked_for_twice_is_named_once():
 
 def test_nothing_is_changed_in_the_scores_or_the_ranking():
     result = run_with_gaps()
+    orchestrator.restore_original(result.run_id)         # going back to the original best fit happens once, before the points
     final = final_of(result.run_id)
 
     def snapshot():
@@ -458,6 +461,8 @@ def test_clicking_the_button_shows_the_final_supplier_why_it_fits_and_the_points
     assert "over our Rs 60 lakh budget" in shown and ">Budget<" in shown and T.NEGOTIATION_PLAIN_TEXT in shown
     with repository.connection() as conn:
         assert [r.supplier_name for r in repository.list_negotiations(conn, result.run_id)] == [final]
+    assert f"#### {T.POINTS_TITLE.format(supplier=final)}" in [t for _k, t, _kw in page.visible]      # its own clear heading
+    assert T.POINTS_SUB.format(supplier=final) in shown
 
 
 def test_with_a_key_the_ai_wording_is_shown_and_said_so(monkeypatch):
@@ -627,3 +632,9 @@ def test_once_every_round_is_used_the_final_section_comes_before_the_question(mo
     heads = [t for k, t, _kw in page.visible if k == "markdown" and t.startswith("####")]
     assert heads.count(f"#### {R.T.NEGOTIATION_TITLE}") == 1
     assert heads.index("#### Your answer") < heads.index(f"#### {R.T.NEGOTIATION_TITLE}")
+
+
+def test_the_negotiation_points_have_their_own_clear_heading_after_the_click():
+    import test_tab_review as R
+    assert R.T.POINTS_TITLE.format(supplier="Apex Systems") == "Negotiation points for Apex Systems"
+    assert "Ask Apex Systems for these before you sign" in R.T.POINTS_SUB.format(supplier="Apex Systems")

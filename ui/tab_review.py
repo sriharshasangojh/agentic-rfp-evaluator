@@ -36,8 +36,9 @@ import streamlit as st
 from agents import orchestrator
 from db import repository
 from tools import insights, review, reweight
+from ui import picks as picks_view
 from ui import sidebar, tab_audit, tab_overview, theme
-from ui.tab_new_evaluation import SHOWN_RUN_KEY
+from ui.tab_new_evaluation import READ_ONLY_KEY, SHOWN_RUN_KEY
 
 PENDING_KEY = "rv_pending"       # what a button asked for; carried out the next time the tab is drawn
 MESSAGE_KEY = "rv_message"       # (ok, text) after an action; a refusal is shown once, a success is already visible on the page
@@ -82,6 +83,8 @@ NEGOTIATION_INTRO = ("You used all the rounds, so here is one final recommendati
 NEGOTIATION_DONE = "Done. Your final recommendation and the negotiation points are just below."
 NEGOTIATION_NONE = "No supplier meets every must-have, so there is no supplier to recommend or to negotiate with."
 FIT_HEAD = "Best fit for what you asked for: {supplier}"
+POINTS_TITLE = "Negotiation points for {supplier}"
+POINTS_SUB = "Ask {supplier} for these before you sign. They are suggestions only, shown in order of importance."
 NEGOTIATION_LOCKED = orchestrator.NEGOTIATION_LOCKED_TEXT
 NEGOTIATION_BUTTON = "Make the final recommendation and negotiation points"
 NEGOTIATION_TOPICS = {insights.TOPIC_GATE: ("Must-have", tab_overview.BAD), insights.TOPIC_BUDGET: ("Budget", tab_overview.BAD),
@@ -445,7 +448,8 @@ def _understand(pending: dict[str, Any], run_id: str) -> orchestrator.ReviewOutc
         return orchestrator.ReviewOutcome(False, understood.message)
     st.session_state.pop(_keys(run_id, int(pending["round_no"]))["pick"], None)
     st.session_state[PROPOSAL_KEY] = {"run_id": run_id, "round_no": int(pending["round_no"]), "text": reweight.clean_need(pending["text"]),
-                                      "criterion_id": understood.criterion_id, "reading": understood.reading}
+                                      "criterion_id": understood.criterion_id, "reading": understood.reading,
+                                      "leaning": understood.leaning}
     return orchestrator.ReviewOutcome(True, "")
 
 
@@ -465,7 +469,8 @@ def _carry_out(pending: dict[str, Any], run_id: str) -> tuple[orchestrator.Revie
         if not valid or criterion is None:
             return orchestrator.ReviewOutcome(False, "That request was not understood. Write what you need again."), False
         outcome = orchestrator.change_priorities(run_id, score, criterion, round_no, proposal["text"], actor,
-                                                 reading=proposal["reading"], proposed_id=proposal["criterion_id"])
+                                                 reading=proposal["reading"], proposed_id=proposal["criterion_id"],
+                                                 leaning=proposal.get("leaning") if criterion == proposal["criterion_id"] else None)
     elif kind == "understand":
         outcome = _understand(pending, run_id)
         return outcome, False
@@ -488,6 +493,8 @@ def _do_pending(run_id: str) -> None:
     cleared after it was saved."""
     pending = st.session_state.pop(PENDING_KEY, None)
     if not isinstance(pending, dict) or pending.get("run_id") != run_id:
+        return
+    if st.session_state.get(READ_ONLY_KEY) == run_id:          # a past run opened from the history is only looked at (F21)
         return
     outcome, clear = _carry_out(pending, run_id)
     st.session_state[MESSAGE_KEY] = (outcome.ok, outcome.message)
@@ -613,7 +620,7 @@ def fit_html(record: repository.NegotiationRecord) -> str:
             f'</div>{body}</div>')
 
 
-def _negotiation(run_id: str, view: ReviewView, records: Sequence[repository.NegotiationRecord]) -> None:
+def _negotiation(run_id: str, view: ReviewView, records: Sequence[repository.NegotiationRecord], read_only: bool = False) -> None:
     """After every round: the final recommendation (Python's pick), why it fits, and the points to negotiate."""
     if not view.board:
         return
@@ -628,12 +635,16 @@ def _negotiation(run_id: str, view: ReviewView, records: Sequence[repository.Neg
     newest = next((r for r in reversed(records) if r.supplier_name == view.recommended and r.points), None)
     if newest is not None:
         st.markdown(fit_html(newest), unsafe_allow_html=True)
+        st.divider()
+        st.markdown(f"#### {POINTS_TITLE.format(supplier=newest.supplier_name)}")
+        _small(POINTS_SUB.format(supplier=newest.supplier_name))
         st.markdown(negotiation_html(newest), unsafe_allow_html=True)
         _small(NEGOTIATION_AI_TEXT if (any(p.get("worded") for p in newest.points) or newest.fit.get("worded")) else NEGOTIATION_PLAIN_TEXT)
-    st.button(NEGOTIATION_BUTTON, key=f"rv_neg_{run_id}", on_click=_queue_negotiation, args=(run_id, view.recommended))
+    if not read_only:
+        st.button(NEGOTIATION_BUTTON, key=f"rv_neg_{run_id}", on_click=_queue_negotiation, args=(run_id, view.recommended))
 
 
-def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.NegotiationRecord] = ()) -> None:
+def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.NegotiationRecord] = (), read_only: bool = False) -> None:
     _small(view.run_line)
     st.markdown(INTRO_TEXT)
     message = st.session_state.pop(MESSAGE_KEY, None)
@@ -645,14 +656,17 @@ def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.Negot
     st.markdown("#### Where things stand")
     if view.recommended:
         st.markdown(recommendation_html(view.recommended, view.board), unsafe_allow_html=True)
+        picks_view.show(st, run_id)                      # F21b: the pick for the priorities and the best fit, side by side
     if view.rounds:
         st.markdown("#### What changed last")
         st.markdown(round_summary_html(view.rounds[-1]), unsafe_allow_html=True)
 
     if view.rounds_left == 0:                          # every round used: the final recommendation is what is left to do, so it comes first
-        _negotiation(run_id, view, negotiations)
+        _negotiation(run_id, view, negotiations, read_only)
 
-    if view.accepted is not None and view.status == repository.RUN_FINAL:
+    if read_only:
+        st.info(tab_audit.READ_ONLY_TEXT)
+    elif view.accepted is not None and view.status == repository.RUN_FINAL:
         st.success(FINAL_TEXT.format(supplier=view.accepted.supplier, when=view.accepted.when))
     elif view.status != repository.RUN_EVALUATED:
         st.info(CLOSED_TEXT.format(status=view.status.lower()))
@@ -662,7 +676,7 @@ def _show(run_id: str, view: ReviewView, negotiations: Sequence[repository.Negot
         _question(run_id, view)
 
     if view.rounds_left > 0:
-        _negotiation(run_id, view, negotiations)
+        _negotiation(run_id, view, negotiations, read_only)
     _details(view)
 
 
@@ -684,4 +698,4 @@ def render() -> None:
     if run is None or not suppliers:
         st.info(NOT_FOUND_TEXT)
         return
-    _show(run_id, build_review(run, suppliers, feedback), negotiations)
+    _show(run_id, build_review(run, suppliers, feedback), negotiations, st.session_state.get(READ_ONLY_KEY) == run_id)

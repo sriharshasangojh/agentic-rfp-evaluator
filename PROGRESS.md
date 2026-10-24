@@ -40,7 +40,7 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | Priorities | Your priorities (before a run) | Approved | 2026-10-24 | Tick boxes and a typed sentence read by the AI and confirmed by the buyer; +10 per tick (cap 60, total 100), this run only; saved with the run and audited; tests: 52 + 13 new | 0 |
 | Price score | Commercial Value worked out from the totals | Approved | 2026-10-24 | Lowest total gets full marks, others max x lowest / total; AI marks kept in attempts; audit event `price_marks_set`; tests: 29 new | 0 |
 | F20 | Final recommendation and negotiation | Approved | 2026-10-24 | After 3 rounds: Python picks the final supplier, AI words the fit note and up to 5 negotiation points (no other supplier named); saved in `negotiation_points`; tests: 79 new | 0 |
-| F21 | Audit: history and trail | Not started | | | |
+| F21 | Audit: history and trail | Approved | 2026-10-25 | Tiles, run history with filters, open a past run read-only, change trail with score-changes filter, PDF fingerprints, JSON feedback_rounds; plus: leaning and price wish (extension), formula only on request, two picks panel, return to best fit after 3 unhappy rounds, reviewer name required, negotiation heading; tests: 27 + 46 + 41 new | 0 |
 | M3 | Milestone: push | Not started | | | |
 | F22 | README and sample run | Not started | | | |
 | F23 | Deployment readiness | Not started | | | |

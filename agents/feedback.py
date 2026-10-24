@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from llm import client
-from tools import reweight
+from tools import insights, leaning as leaning_tool, reweight
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "feedback_system.md"
 PROMPT_TAGS = ("criteria", "client_text")
@@ -60,6 +60,7 @@ class Reading:
     supplier: str | None
     reading: str                      # one sentence for the person to confirm
     readable: bool = True
+    leaning: leaning_tool.Leaning | None = None   # what the person leans towards (F21b); set only when it changes something
     tokens: int | None = None
     cost_usd: float | None = None
     attempts: int = 1
@@ -123,7 +124,7 @@ def _whole_number(value: object) -> int | None:
     return None
 
 
-def parse_reading(reply: str, criteria: Sequence[PromptCriterion]) -> Reading | None:
+def parse_reading(reply: str, criteria: Sequence[PromptCriterion], need: str = "") -> Reading | None:
     """The AI's reply as a Reading, or None when it is not usable (not JSON, or no known action). A "reweight" that does not point at
     a criterion of the run becomes "unclear": the person picks an option instead."""
     data = _json_object(reply)
@@ -141,6 +142,12 @@ def parse_reading(reply: str, criteria: Sequence[PromptCriterion]) -> Reading | 
     supplier = " ".join(supplier.split())[:80] if isinstance(supplier, str) and supplier.strip() else None
     said = data.get("reading")
     reading = " ".join(said.split())[:READING_MAX_CHARS].strip() if isinstance(said, str) else ""
+    price_id = next((c.criterion_id for c in criteria if insights.is_price_criterion(c.name)), None)
+    lean = leaning_tool.clean(data.get("leaning"), list(known), price_id, need)
+    if lean.changes_anything and action in ("reweight", "unclear"):     # a wish about price or about how much areas count: Python reads it
+        target = max(dict(lean.emphasis), key=lambda i: (dict(lean.emphasis)[i], -i)) if lean.emphasis else (price_id or next(iter(known)))
+        names = {c.criterion_id: c.name for c in criteria}
+        return Reading("reweight", lean.only_id or target, None, leaning_tool.describe(lean, names), leaning=lean)
     if action == "reweight" and criterion_id is None:
         action, reading = "unclear", ""
     if action == "reweight":
@@ -174,7 +181,7 @@ def interpret(
         result = client.call_llm(settings, sent, temperature, json_mode=True, backend=backend, sleep=sleep)
         tokens.append(result.tokens)
         costs.append(result.cost_usd)
-        reading = parse_reading(result.text, criteria)
+        reading = parse_reading(result.text, criteria, need)
         if reading is not None:
             break
         sent = [*messages, {"role": "assistant", "content": result.text[:MAX_ECHO_CHARS]},
@@ -182,5 +189,5 @@ def interpret(
     unreadable = reading is None
     if reading is None:
         reading = Reading("unclear", None, None, "", readable=False)
-    return Reading(reading.action, reading.criterion_id, reading.supplier, reading.reading, not unreadable,
+    return Reading(reading.action, reading.criterion_id, reading.supplier, reading.reading, not unreadable, reading.leaning,
                    _total(tokens), _total(costs), attempts)   # type: ignore[arg-type]

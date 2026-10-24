@@ -10,8 +10,10 @@ free-form part (the extracted facts and the industry breakdown) is cleaned on th
 secret is dropped and a number that is not finite becomes null. The file never holds an API key or the full text of a
 proposal. Clicking the button adds a "json_exported" row to the audit trail (spec section 14).
 
-Not on this tab yet: the three AI-quality tiles, the run history, the change trail and the PDF fingerprints (feature F21).
-The feedback rounds of the file are an empty list; the negotiation points are the newest set made for each supplier (F20).
+Feature F21 adds, above the run details: three AI-quality tiles across all runs, and the run history (filter by date, model and
+winner; open a past run, which is then only looked at, not changed). Below the details: the change trail of the shown run (with a
+"Score changes only" filter) and the PDF fingerprints. The feedback rounds of the file are the rounds of "not satisfied"; the
+negotiation points are the newest set made for each supplier (F20).
 
 The page is small pieces of HTML (as on the Overview and Scorecards tabs) because Streamlit's own widgets cannot lay out
 the tiles. Every piece of text that comes from a proposal, a model or the buyer goes through `html.escape`.
@@ -25,15 +27,15 @@ import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import streamlit as st
 
 from db import audit, repository
-from tools import insights
+from tools import audit_view, insights
 from ui import tab_overview, theme
-from ui.tab_new_evaluation import SHOWN_RUN_KEY
+from ui.tab_new_evaluation import READ_ONLY_KEY, SHOWN_RUN_KEY
 
 DOWNLOAD_LABEL = "Download JSON"
 DOWNLOAD_KEY = "au_download"
@@ -54,6 +56,18 @@ NOT_FOUND_TEXT = "The results of this run could not be found. Run a new evaluati
 DATABASE_ERROR_TEXT = ("The saved results could not be read. Close any other program using `rfp_evaluation.db`, "
                        "wait a few seconds, then reload the page.")
 MUTED = tab_overview.MUTED
+
+QUALITY_TITLE, HISTORY_TITLE, TRAIL_TITLE, FINGERPRINT_TITLE = "AI quality, all runs", "Run history", "Change trail", "PDF fingerprints"
+NO_MATCH_TEXT = "No run matches these filters."
+OPEN_LABEL, OPEN_PICK_LABEL = "Open this run", "Run to open"
+SCORE_ONLY_LABEL = "Score changes only"
+READ_ONLY_TEXT = ("You are looking at a past run opened from the history. It is read-only here: nothing in it can be changed. "
+                  "Start a new evaluation to work on a new run.")
+NO_TRAIL_TEXT = "Nothing has been recorded for this run yet."
+NO_SCORE_CHANGES_TEXT = "No score, priority or ranking changes were recorded for this run."
+NO_FINGERPRINTS_TEXT = "No proposal fingerprints were saved for this run."
+DATE_FROM_KEY, DATE_TO_KEY, MODEL_KEY, WINNER_KEY, OPEN_KEY, SCORE_ONLY_KEY = (
+    "au_from", "au_to", "au_model", "au_winner", "au_open_pick", "au_score_only")
 
 # The keys of spec section 15, in the order the file has them.
 TOP_LEVEL_KEYS = ("rfp_run_id", "created_at", "status", "provider", "model", "temperature", "template", "criteria_snapshot",
@@ -80,6 +94,13 @@ _CSS = (
     f".au-group-name{{color:{theme.HEADING};font-weight:700}}"
     f".au-list{{margin:0.25rem 0 0.1rem 0;padding-left:1.2rem;color:{theme.TEXT};font-size:0.93rem}}"
     ".au-list li{margin:0.2rem 0;overflow-wrap:anywhere}"
+    ".au-wrap{overflow-x:auto;margin:0.25rem 0 0.5rem 0}"
+    f".au-table{{width:100%;border-collapse:collapse;font-size:0.9rem;color:{theme.TEXT}}}"
+    f".au-table th{{background:{theme.TAB_SELECTED_BACKGROUND};color:{theme.HEADING};text-align:left;padding:0.4rem 0.6rem;"
+    f"border-bottom:2px solid {theme.TEAL};white-space:nowrap;font-weight:600}}"
+    f".au-table td{{padding:0.4rem 0.6rem;border-bottom:1px solid {theme.BORDER};vertical-align:top;overflow-wrap:anywhere}}"
+    f".au-now td{{background:{theme.TAB_HOVER_BACKGROUND};font-weight:600}}"
+    ".au-change{font-weight:600}"
 )
 
 
@@ -171,8 +192,23 @@ def negotiation_export(negotiations: Sequence[repository.NegotiationRecord]) -> 
             for r in newest.values()]
 
 
+def feedback_rounds_export(feedback: Sequence[repository.FeedbackRow]) -> list[dict[str, Any]]:
+    """The rounds of "not satisfied": what the person said, which area counts for more, and who was recommended before and after."""
+    rounds = []
+    for row in feedback:
+        if row.action != repository.ACTION_REWEIGHT:
+            continue
+        d = row.details
+        rounds.append({"round": _clean(d.get("round")), "satisfaction": _clean(row.rating), "reason": _clean(row.comment),
+                       "criterion": _clean(d.get("criterion")), "weights": _clean(d.get("weights")) if isinstance(d.get("weights"), list) else [],
+                       "recommended_before": _clean(d.get("recommended_before")), "recommended_after": _clean(d.get("recommended_after")),
+                       "by": _clean(d.get("by")), "created_at": _clean(row.created_at)})
+    return rounds
+
+
 def build_export(run: repository.RunRecord, suppliers: list[repository.StoredSupplier],
-                 overview: tab_overview.Overview, negotiations: Sequence[repository.NegotiationRecord] = ()) -> dict[str, Any]:
+                 overview: tab_overview.Overview, negotiations: Sequence[repository.NegotiationRecord] = (),
+                 feedback: Sequence[repository.FeedbackRow] = ()) -> dict[str, Any]:
     """The whole file as plain Python data, in the order and with the keys of spec section 15. No Streamlit here."""
     rows = {row.name: row for row in overview.rows}
     values: dict[str, Any] = {
@@ -193,7 +229,7 @@ def build_export(run: repository.RunRecord, suppliers: list[repository.StoredSup
             "industry_warning": overview.industry_warning,
         },
         "tie_break_explanations": [row.tie_break for row in overview.rows if row.tie_break],
-        "feedback_rounds": [],          # saved by the "Not happy?" flow (feature F19)
+        "feedback_rounds": feedback_rounds_export(feedback),         # the rounds of "not satisfied"
         "negotiation_points": negotiation_export(negotiations),     # the newest set for each supplier (feature F20)
         "totals": {"tokens": run.total_tokens, "cost_usd": _clean(run.total_cost_usd),
                    "duration_seconds": _clean(run.duration_seconds)},
@@ -351,6 +387,108 @@ def warning_summary(count: int) -> str:
     return NO_WARNINGS_TEXT if count == 0 else f"{count} warning{'' if count == 1 else 's'} in this run."
 
 
+# ---------------------------------------------------------------- history, quality and trail (F21)
+
+def quality_facts(tiles: audit_view.QualityTiles) -> tuple[Fact, ...]:
+    changed = (Fact("Runs where priorities were changed", f"{tiles.changed_rate:g}%", f"{tiles.changed_runs} of {tiles.runs} runs")
+               if tiles.changed_rate is not None else Fact("Runs where priorities were changed", "No runs yet"))
+    evidence = (Fact("Quotes not found in the proposal", f"{tiles.evidence_rate:g}%", f"{tiles.evidence_missing} of {tiles.evidence_checked} quotes checked")
+                if tiles.evidence_rate is not None else Fact("Quotes not found in the proposal", "Nothing checked yet"))
+    cost = (Fact("Average cost per run", f"USD {tiles.average_cost_usd:.4f}",
+                 f"over {tiles.runs_with_cost} run{'' if tiles.runs_with_cost == 1 else 's'} that reported a cost")
+            if tiles.average_cost_usd is not None else Fact("Average cost per run", NOT_RECORDED))
+    return (changed, evidence, cost)
+
+
+def history_label(line: audit_view.HistoryLine) -> str:
+    when = started_text(line.started.isoformat()) if line.started is not None else NOT_RECORDED
+    return f"{when} · {line.winner or 'no winner'} · {line.run_id}"
+
+
+def history_html(lines: Sequence[audit_view.HistoryLine], shown: str | None = None) -> str:
+    rows = []
+    for line in lines:
+        cost = f"USD {line.cost_usd:.4f}" if line.cost_usd is not None else NOT_RECORDED
+        when = started_text(line.started.isoformat()) if line.started is not None else NOT_RECORDED
+        now = ' class="au-now"' if line.run_id == shown else ""
+        rows.append(f"<tr{now}><td>{_e(when)}</td><td>{_e(line.model or NOT_RECORDED)}</td><td>{_e(line.winner or 'None')}</td>"
+                    f"<td>{line.suppliers}</td><td>{_e(line.status)}</td><td>{_e(cost)}</td><td class=\"au-mono\">{_e(line.run_id)}</td></tr>")
+    head = "".join(f"<th>{h}</th>" for h in ("Started", "Model", "Winner", "Suppliers", "Status", "Cost", "Run"))
+    return f'<style>{_CSS}</style><div class="au-wrap"><table class="au-table"><thead><tr>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
+
+
+def trail_html(rows: Sequence[audit_view.TrailRow]) -> str:
+    body = "".join(f"<tr><td>{_e(r.when)}</td><td>{_e(r.actor)}</td><td{' class=\"au-change\"' if r.score_change else ''}>{_e(r.text)}</td></tr>" for r in rows)
+    head = "".join(f"<th>{h}</th>" for h in ("When", "Who", "What happened"))
+    return f'<style>{_CSS}</style><div class="au-wrap"><table class="au-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def fingerprints_html(documents: Sequence[repository.DocumentRecord]) -> str:
+    body = "".join(f'<tr><td>{_e(d.supplier_name)}</td><td>{_e(d.file_name)}</td><td>{d.pages}</td><td class="au-mono">{_e(d.sha256)}</td></tr>'
+                   for d in documents)
+    head = "".join(f"<th>{h}</th>" for h in ("Supplier", "File", "Pages", "SHA-256 fingerprint"))
+    return f'<style>{_CSS}</style><div class="au-wrap"><table class="au-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def _open_run(run_id: str) -> None:
+    """Button callback: show this past run on every tab, read-only. The run already on screen is left as it is."""
+    if st.session_state.get(SHOWN_RUN_KEY) == run_id and st.session_state.get(READ_ONLY_KEY) is None:
+        return
+    st.session_state[SHOWN_RUN_KEY] = run_id
+    st.session_state[READ_ONLY_KEY] = run_id
+
+
+def _all_runs_section(summaries: Sequence[repository.RunSummary], evidence: tuple[int, int]) -> None:
+    st.markdown(f"#### {QUALITY_TITLE}")
+    tiles = audit_view.quality_tiles(len(summaries), sum(s.changed_priorities for s in summaries), evidence[0], evidence[1],
+                                     [s.run.total_cost_usd for s in summaries])
+    st.markdown(facts_html(quality_facts(tiles)), unsafe_allow_html=True)
+
+    st.markdown(f"#### {HISTORY_TITLE}")
+    lines = audit_view.history_lines(summaries)
+    first, second, third, fourth = st.columns(4)
+    with first:
+        start = st.date_input("From date", value=None, key=DATE_FROM_KEY)
+    with second:
+        end = st.date_input("To date", value=None, key=DATE_TO_KEY)
+    with third:
+        model = st.selectbox("Model", audit_view.choices(lines, "model"), key=MODEL_KEY)
+    with fourth:
+        winner = st.selectbox("Winner", audit_view.choices(lines, "winner"), key=WINNER_KEY)
+    kept = audit_view.filter_history(lines, start=start if isinstance(start, date) else None, end=end if isinstance(end, date) else None,
+                                     model=model, winner=winner)
+    if not kept:
+        _small(NO_MATCH_TEXT)
+        return
+    st.markdown(history_html(kept, st.session_state.get(SHOWN_RUN_KEY)), unsafe_allow_html=True)
+    ids = [line.run_id for line in kept]
+    labels = {line.run_id: history_label(line) for line in kept}
+    if st.session_state.get(OPEN_KEY) not in ids:
+        st.session_state.pop(OPEN_KEY, None)
+    pick = st.selectbox(OPEN_PICK_LABEL, ids, format_func=lambda run_id: labels[run_id], key=OPEN_KEY)
+    st.button(OPEN_LABEL, key="au_open", on_click=_open_run, args=(pick,))
+
+
+def _trail_section(events: Sequence[repository.AuditEvent], documents: Sequence[repository.DocumentRecord]) -> None:
+    st.markdown(f"#### {TRAIL_TITLE}")
+    rows = audit_view.trail_rows(events, started_text)
+    if not rows:
+        _small(NO_TRAIL_TEXT)
+    else:
+        only = st.checkbox(SCORE_ONLY_LABEL, key=SCORE_ONLY_KEY)
+        shown = audit_view.only_score_changes(rows) if only else rows
+        if shown:
+            with st.expander(f"{len(shown)} event{'' if len(shown) == 1 else 's'}", expanded=False):
+                st.markdown(trail_html(shown), unsafe_allow_html=True)
+        else:
+            _small(NO_SCORE_CHANGES_TEXT)
+    st.markdown(f"#### {FINGERPRINT_TITLE}")
+    if documents:
+        st.markdown(fingerprints_html(documents), unsafe_allow_html=True)
+    else:
+        _small(NO_FINGERPRINTS_TEXT)
+
+
 # ---------------------------------------------------------------- the page
 
 def note_export(run_id: str, file_name: str, suppliers: int, size: int) -> None:
@@ -407,6 +545,15 @@ def _show_page(details: RunDetails, export: dict[str, Any], run_id: str) -> None
 
 
 def render() -> None:
+    try:
+        with repository.connection() as conn:
+            summaries = repository.list_run_summaries(conn)
+            evidence = repository.evidence_counts(conn)
+    except (sqlite3.Error, OSError):
+        st.error(DATABASE_ERROR_TEXT)
+        return
+    if summaries:                                      # with no saved run there is nothing to count or list yet
+        _all_runs_section(summaries, evidence)
     run_id = st.session_state.get(SHOWN_RUN_KEY)
     if not run_id:
         st.info(EMPTY_TEXT)
@@ -417,12 +564,18 @@ def render() -> None:
             suppliers = repository.list_supplier_results(conn, run_id) if run is not None else []
             template = repository.get_template(conn, run.template_id) if run is not None else None
             negotiations = repository.list_negotiations(conn, run_id) if run is not None else []
+            feedback = repository.list_feedback(conn, run_id) if run is not None else []
+            events = repository.list_events(conn, run_id) if run is not None else []
+            documents = repository.list_documents(conn, run_id) if run is not None else []
     except (sqlite3.Error, OSError):
         st.error(DATABASE_ERROR_TEXT)
         return
     if run is None or not suppliers:
         st.info(NOT_FOUND_TEXT)
         return
+    if st.session_state.get(READ_ONLY_KEY) == run_id:
+        st.info(READ_ONLY_TEXT)
     overview = tab_overview.build_overview(run, suppliers)
     _show_page(build_details(run, suppliers, overview, template.name if template else None),
-               build_export(run, suppliers, overview, negotiations), run_id)
+               build_export(run, suppliers, overview, negotiations, feedback), run_id)
+    _trail_section(events, documents)

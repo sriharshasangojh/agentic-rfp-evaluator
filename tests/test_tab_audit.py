@@ -664,6 +664,19 @@ def test_tie_breaks_html_escapes_supplier_names():
 
 # ---------------------------------------------------------------- the page, drawn into a recording stand-in
 
+class _Block:
+    """What `st.columns` and `st.expander` give back: drawing inside it is drawing on the page."""
+
+    def __init__(self, page) -> None:
+        self.page = page
+
+    def __enter__(self):
+        return self.page
+
+    def __exit__(self, *exc):
+        return False
+
+
 class _Page:
     """A recording stand-in for the parts of Streamlit that this tab is drawn with."""
 
@@ -690,6 +703,31 @@ class _Page:
         self._record("download_button", label, kwargs)
         return False
 
+    # the history, trail and fingerprints (F21): a click is not drawn, so the controls just hold what the session says
+    def columns(self, count, **kwargs):
+        return [_Block(self) for _ in range(count if isinstance(count, int) else len(count))]
+
+    def expander(self, label, **kwargs):
+        self._record("expander", label, kwargs)
+        return _Block(self)
+
+    def date_input(self, label, value=None, key=None, **kwargs):
+        self._record("date_input", label, {"key": key})
+        return self.session_state.get(key, value)
+
+    def selectbox(self, label, options, key=None, format_func=str, **kwargs):
+        options = list(options)
+        self._record("selectbox", label, {"key": key, "options": options, "labels": [format_func(o) for o in options]})
+        return self.session_state.setdefault(key, options[0]) if options else None
+
+    def checkbox(self, label, key=None, **kwargs):
+        self._record("checkbox", label, {"key": key})
+        return bool(self.session_state.get(key, False))
+
+    def button(self, label, key=None, on_click=None, args=(), **kwargs):
+        self._record("button", label, {"key": key, "on_click": on_click, "args": args})
+        return False
+
     @property
     def kinds(self) -> list[str]:
         return [kind for kind, _text, _kw in self.calls]
@@ -709,12 +747,15 @@ def drawn(monkeypatch, *suppliers: dict[str, Any], session: dict[str, Any] | Non
 def test_the_page_order_is_details_download_warnings_then_tie_breaks(monkeypatch):
     page = drawn(monkeypatch, supplier("Apex", 1, warnings=["Look at this"]), supplier("Nexa", 2, tie_break="Nexa above Orbit: earlier submission"), supplier("Orbit", 3))
     headings = [text for kind, text, _kw in page.calls if kind == "markdown" and text.startswith("####")]
-    assert headings == ["#### Run details", "#### Warnings", "#### Tie-breaks"]
+    assert headings == [f"#### {A.QUALITY_TITLE}", f"#### {A.HISTORY_TITLE}", "#### Run details", "#### Warnings", "#### Tie-breaks",
+                        f"#### {A.TRAIL_TITLE}", f"#### {A.FINGERPRINT_TITLE}"]
 
     def at(kind: str, text: str) -> int:
         return next(i for i, (k, t, _kw) in enumerate(page.calls) if k == kind and t.startswith(text))
 
-    order = [at("markdown", "#### Run details"), at("markdown", "<style>"), at("download_button", A.DOWNLOAD_LABEL),
+    details_at = at("markdown", "#### Run details")
+    facts_at = next(i for i, (k, t, _kw) in enumerate(page.calls) if i > details_at and k == "markdown" and t.startswith("<style>"))
+    order = [details_at, facts_at, at("download_button", A.DOWNLOAD_LABEL),
              at("markdown", "#### Warnings"), at("markdown", "#### Tie-breaks")]
     assert order == sorted(order) and len(set(order)) == 5
     assert 'class="au-facts"' in page.calls[order[1]][1]
@@ -779,7 +820,7 @@ def test_a_run_with_no_saved_suppliers_gets_the_same_friendly_message(monkeypatc
     page = _Page({tab_new_evaluation.SHOWN_RUN_KEY: "RUN-EMPTY"})
     monkeypatch.setattr(A, "st", page)
     A.render()
-    assert page.kinds == ["info"] and page.text() == A.NOT_FOUND_TEXT
+    assert page.kinds[-1] == "info" and page.calls[-1][1] == A.NOT_FOUND_TEXT and "info" not in page.kinds[:-1]
 
 
 @pytest.mark.parametrize("failure", [sqlite3.OperationalError("database is locked"), OSError("locked")])
@@ -812,10 +853,9 @@ def test_an_export_of_another_run_is_not_mentioned(monkeypatch):
     assert "Exported as" not in page.text()
 
 
-def test_the_page_draws_no_chart_and_no_tab_content_that_belongs_to_a_later_feature(monkeypatch):
-    text = drawn(monkeypatch, *three()).text()
-    for later in ("Override rate", "Evidence-not-found", "Run history", "Change trail", "fingerprint"):
-        assert later.lower() not in text.lower(), later
+def test_the_page_draws_no_chart(monkeypatch):
+    page = drawn(monkeypatch, *three())
+    assert "plotly_chart" not in page.kinds and "pyplot" not in page.kinds
 
 
 # ---------------------------------------------------------------- the click: "JSON exported" in the audit trail

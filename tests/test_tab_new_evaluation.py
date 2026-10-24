@@ -96,8 +96,9 @@ def no_default_key_and_no_network(monkeypatch):
     monkeypatch.setattr(client, "_default_http_get", refuse)
 
 
-def start() -> AppTest:
+def start(reviewer: str = "Sri") -> AppTest:
     app = AppTest.from_file(str(APP_PATH), default_timeout=60)
+    app.session_state["reviewer_name"] = reviewer          # the reviewer name is required before evaluating
     app.run()
     return app
 
@@ -220,7 +221,10 @@ def test_one_proposal_alone_is_refused_and_the_button_stays_off(uploaded, monkey
     monkeypatch.setattr(tab_new_evaluation, "_uploaded_files", lambda disabled: uploaded[:1])
     app = start()
     assert "Upload at least 2 supplier proposal PDFs. A ranking compares suppliers, so one alone is not evaluated." in texts(tab(app), "error")
-    assert tab(app).button(key="ne_evaluate").disabled
+    assert not tab(app).button(key="ne_evaluate").disabled          # it can be pressed, and then warns
+    tab(app).button(key="ne_evaluate").click().run()
+    assert tab_new_evaluation.TOO_FEW_TEXT in texts(tab(app), "warning")
+    assert app.session_state["run_in_progress"] is False and "ne_result" not in app.session_state   # nothing was run
 
 
 @needs_pdf_reader
@@ -358,3 +362,21 @@ def test_ticking_a_criterion_shows_the_new_weights_for_this_run_only():
     assert not app.exception
     assert "Commercial Value 20% to 30%" in texts(tab(app), "caption")
     assert "for this run only" in texts(tab(app), "caption")
+
+
+@needs_pdf_reader
+def test_without_a_reviewer_name_the_button_says_so_and_nothing_runs(uploaded):
+    app = start(reviewer="")
+    fill_in(app)
+    app.run()
+    assert not tab(app).button(key="ne_evaluate").disabled          # it can be pressed, and then explains
+    tab(app).button(key="ne_evaluate").click().run()
+    assert tab_new_evaluation.NO_NAME_TEXT in texts(tab(app), "warning")
+    assert app.session_state["run_in_progress"] is False and "ne_result" not in app.session_state
+
+
+@needs_pdf_reader
+def test_the_priorities_box_says_it_is_optional_and_that_an_objective_run_needs_none(uploaded):
+    app = start()
+    assert tab_new_evaluation.OBJECTIVE_NOTE in texts(tab(app), "caption")
+    assert "leave them empty" in tab_new_evaluation.OBJECTIVE_NOTE and "optional" in tab_new_evaluation.PRIORITIES_LABEL

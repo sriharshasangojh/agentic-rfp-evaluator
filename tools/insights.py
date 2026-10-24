@@ -446,13 +446,16 @@ def is_price_criterion(name: object) -> bool:
 class PriceMarks:
     """The price marks of one batch: `marks` and `totals_rs` by supplier name, for the suppliers that state a total."""
 
-    reference_rs: float                     # the lowest total in the batch: it gets the full mark
+    reference_rs: float                     # the lowest total in the batch (the highest when the buyer wants the dearest): it gets the full mark
     marks: dict[str, float]
     totals_rs: dict[str, float]
     without_total: tuple[str, ...]          # suppliers with no usable total: they keep the AI's mark
 
 
-def price_marks(totals: Mapping[str, object], max_score: float) -> PriceMarks | None:
+PRICE_LOW, PRICE_HIGH = "low", "high"     # which end of the price range the buyer wants (F21b)
+
+
+def price_marks(totals: Mapping[str, object], max_score: float, direction: str = PRICE_LOW) -> PriceMarks | None:
     """The Commercial Value mark worked out from the totals: the lowest total gets `max_score`, every other supplier gets
     max_score x lowest / its total (2 decimals, half up). The AI reads a price table well but does not weigh how much cheaper
     one offer is, so the price gap is worked out here. Needs at least two suppliers with a usable total (positive number);
@@ -461,6 +464,10 @@ def price_marks(totals: Mapping[str, object], max_score: float) -> PriceMarks | 
     if len(usable) < 2 or not _is_amount(max_score) or max_score <= 0:
         return None
     lowest = min(usable.values(), key=_exact)
+    if direction == PRICE_HIGH:                    # the buyer wants the dearest: the highest total gets the full mark, the rest total / highest
+        highest = max(usable.values(), key=_exact)
+        marks = {name: int(_exact(max_score) * _exact(total) / _exact(highest) * 100 + Fraction(1, 2)) / 100 for name, total in usable.items()}
+        return PriceMarks(highest, marks, usable, tuple(n for n in totals if n not in usable))
     marks = {}
     for name, total in usable.items():
         hundredths = int(_exact(max_score) * _exact(lowest) / _exact(total) * 100 + Fraction(1, 2))
@@ -472,9 +479,16 @@ def _lakh_number(rs: float) -> str:
     return format_lakh(rs).removeprefix("Rs ").removesuffix(" lakh")
 
 
-def price_reason(total_rs: float, reference_rs: float, mark: float, max_score: float) -> str:
+def price_reason(total_rs: float, reference_rs: float, mark: float, max_score: float, direction: str = PRICE_LOW) -> str:
     """Why a supplier got its price mark, in plain words (shown as the justification of the Commercial Value mark)."""
     top = f"{max_score:g}"
+    if direction == PRICE_HIGH:
+        if total_rs == reference_rs:
+            return (f"Price mark worked out from the totals because you asked for the most expensive option: this is the highest total in "
+                    f"this batch ({format_lakh(total_rs)}), so it gets the full {top} marks.")
+        return (f"Price mark worked out from the totals because you asked for the most expensive option: the highest total in this batch is "
+                f"{format_lakh(reference_rs)} and this total is {format_lakh(total_rs)}, so {top} x {_lakh_number(total_rs)} / "
+                f"{_lakh_number(reference_rs)} = {mark:g}.")
     if total_rs == reference_rs:
         return (f"Price mark worked out from the totals, not marked by the AI: this is the lowest total in this batch "
                 f"({format_lakh(total_rs)}), so it gets the full {top} marks.")

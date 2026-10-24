@@ -26,6 +26,8 @@ from agents import evaluator, orchestrator
 from db import repository
 from llm import client
 from tools import industry, insights, pdf_tool, reweight
+from tools import leaning as leaning_tool
+from ui import picks as picks_view
 from ui import sidebar
 
 DEFAULT_BUDGET_RS = 6_000_000      # Meridian's RFP; the visitor can change it for any other purchase
@@ -37,6 +39,13 @@ FILES_KEY = "ne_files"
 PDF_CACHE_KEY = "ne_pdf_cache"     # {file id: _Upload}, so a file is read once
 RESULT_KEY = "ne_result"           # the RunResult of the latest run, shown until the next run starts
 BUTTON_KEY = "ne_evaluate"
+HIGH_PRICE_NOTE = "You asked for the most expensive option: the highest total gets the top price mark in this run."
+TOO_FEW_KEY = "ne_too_few"          # set when the button was pressed with fewer than 2 PDFs; shown as a warning on the next draw
+TOO_FEW_TEXT = "Please add a minimum of 2 PDFs to compare and evaluate."
+NO_NAME_TEXT = "Please enter the reviewer name in the sidebar before evaluating. It is saved with every decision in the audit trail."
+OBJECTIVE_NOTE = ("Priorities are optional. For an objective best-fit evaluation, leave them empty: the suppliers are then ranked "
+                  "only on the default weights set up in Setup.")
+READ_ONLY_KEY = "read_only_run_id"   # set when a past run was opened from the Audit history: that run is only looked at, not changed (F21)
 SHOWN_RUN_KEY = "shown_run_id"     # the finished run that the Overview (and later the Scorecards and Audit tabs) show
 REQUEST_KEY = "ne_run_requested"   # set by the button; the next redraw of this tab runs the batch (and clears it at once)
 PRIORITY_TICK_KEY = "ne_prio_{}"   # one tick box per criterion; the key holds True when ticked
@@ -123,6 +132,7 @@ def _priorities(disabled: bool, settings: client.LLMSettings | None) -> orchestr
     """"Your priorities": tick boxes for what matters more, and a box to say it in words (read by the AI, confirmed by the buyer)."""
     with repository.connection() as conn:
         criteria = repository.list_criteria(conn, active_only=True)
+    st.caption(OBJECTIVE_NOTE)
     with st.expander(PRIORITIES_LABEL, expanded=False):
         st.caption(PRIORITIES_INTRO)
         for c in criteria:
@@ -151,7 +161,15 @@ def _priorities(disabled: bool, settings: client.LLMSettings | None) -> orchestr
         for typed in st.session_state.get(PRIORITY_TYPED_KEY, []):
             if typed.criterion_id in ticked:
                 st.caption(f"You wrote: \u201c{typed.text}\u201d")
-        st.caption(reweight.describe_priorities(reweight.plan_priorities(criteria, ticked)))
+        lean = next((t.leaning for t in reversed(st.session_state.get(PRIORITY_TYPED_KEY, []))
+                     if t.criterion_id in ticked and t.leaning is not None and t.leaning.changes_anything), None)
+        try:
+            shown = orchestrator.describe_weights(leaning_tool.plan(criteria, lean)) if lean is not None else None
+        except ValueError:
+            shown = None
+        st.caption(shown or reweight.describe_priorities(reweight.plan_priorities(criteria, ticked)))
+        if lean is not None and lean.price == insights.PRICE_HIGH:
+            st.caption(HIGH_PRICE_NOTE)
     return orchestrator.PriorityRequest(ticked, tuple(st.session_state.get(PRIORITY_TYPED_KEY, [])))
 
 
@@ -251,6 +269,7 @@ def _run(proposals: Sequence[orchestrator.Proposal], terms: industry.PurchaseTer
     st.session_state[RESULT_KEY] = result
     if result is not None and result.status == repository.RUN_EVALUATED:
         st.session_state[SHOWN_RUN_KEY] = result.run_id
+        st.session_state.pop(READ_ONLY_KEY, None)
         st.session_state[PROPOSAL_CHUNKS_KEY] = (result.run_id, orchestrator.chunks_of(proposals))   # session only, never saved (DECISIONS 120)
     st.rerun()
 
@@ -344,6 +363,8 @@ def _show_result(result: orchestrator.RunResult) -> None:
         tokens, cost = st.columns(2)
         tokens.metric("Tokens used", "n/a" if result.tokens is None else f"{result.tokens:,}")
         cost.metric("Estimated cost (USD)", "n/a" if result.cost_usd is None else f"{result.cost_usd:.4f}")
+        if result.run_id:
+            picks_view.show(st, result.run_id)      # F21b: when priorities were given: the pick for them and the best fit, with the ranks
         st.markdown("#### Top three")
         st.markdown(podium_html(podium(result.suppliers)), unsafe_allow_html=True)
         note = winner_note(result.suppliers)
@@ -385,12 +406,20 @@ def render() -> None:
         st.info("Before evaluating, choose a provider, validate your API key and pick a model in the sidebar.")
 
     ready = bool(files) and check.ok and settings is not None and terms is not None
-    st.button("Evaluate suppliers", key=BUTTON_KEY, type="primary", disabled=running or not ready, on_click=_start_run)
+    no_name = not str(st.session_state.get("reviewer_name") or "").strip()
+    too_few = len(files) < orchestrator.MIN_PROPOSALS and settings is not None and terms is not None   # pressing the button then explains why
+    ready = ready and not no_name
+    explains = settings is not None and terms is not None and (too_few or no_name)      # a click then says what is missing
+    st.button("Evaluate suppliers", key=BUTTON_KEY, type="primary", disabled=running or not (ready or explains), on_click=_start_run)
+    for why in st.session_state.pop(TOO_FEW_KEY, ()) or ():
+        st.warning(why)
 
     if running:
         if ready:
             _run(proposals, terms, settings, priorities)   # ends with st.rerun()
         else:
+            if too_few or no_name:
+                st.session_state[TOO_FEW_KEY] = tuple(t for t, flag in ((TOO_FEW_TEXT, too_few), (NO_NAME_TEXT, no_name)) if flag)
             st.session_state[sidebar.RUN_KEY] = False   # the inputs are no longer valid; never leave the sidebar locked
             st.rerun()
     result = st.session_state.get(RESULT_KEY)

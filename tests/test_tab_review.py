@@ -439,6 +439,9 @@ class _Page:
     def markdown(self, text, **kwargs):
         self._record("markdown", text, **kwargs)
 
+    def divider(self, **kwargs):
+        self._record("divider", "", **kwargs)
+
     def info(self, text, **kwargs):
         self._record("info", text, **kwargs)
 
@@ -850,7 +853,7 @@ def test_with_a_key_the_ai_reads_the_words_and_the_person_confirms_before_anythi
     assert T.NO_KEY_TEXT not in draw(page).text("markdown")
     click(page, UNDERSTAND)
     assert message_of(page) == (True, "") and len(backend.calls) == 1
-    assert page.session_state[T.PROPOSAL_KEY] == {"run_id": run_id, "round_no": 1, "text": NEED, "criterion_id": TECH, "reading": READING}
+    assert page.session_state[T.PROPOSAL_KEY] == {"run_id": run_id, "round_no": 1, "text": NEED, "criterion_id": TECH, "reading": READING, "leaning": None}
     assert feedback_rows() == [] and view_of(run_id).recommended == APEX       # nothing has changed yet
     draw(page)
     assert page.text("success", "error") == ""

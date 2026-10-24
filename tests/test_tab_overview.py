@@ -1067,6 +1067,7 @@ def uploaded(monkeypatch):
 
 def start() -> Any:
     app = AppTest.from_file(str(APP_PATH), default_timeout=60)
+    app.session_state["reviewer_name"] = "Sri"          # the reviewer name is required before evaluating
     app.run()
     return app
 

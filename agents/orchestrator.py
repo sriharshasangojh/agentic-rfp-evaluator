@@ -32,7 +32,7 @@ import secrets
 import sqlite3
 import time
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import PurePath
@@ -43,6 +43,7 @@ from db import audit, repository
 from llm import client
 from tools import gates as gates_tool
 from tools import evidence_checker, industry, insights, pdf_tool, ranking, retrieval, review, reweight
+from tools import leaning as leaning_tool
 
 MAX_PROPOSALS = 10
 MIN_PROPOSALS = 2          # a ranking compares suppliers, so one proposal is not evaluated
@@ -87,6 +88,7 @@ class TypedPriority:
     tokens: int | None = None
     cost_usd: float | None = None
     attempts: int = 1
+    leaning: leaning_tool.Leaning | None = None     # F21b: what the sentence leans towards (price end, areas that count more or less)
 
 
 @dataclass(frozen=True)
@@ -135,7 +137,7 @@ def understand_priority(
         return PriorityReading(False, "The criteria could not be read because the database was busy. Wait a few seconds and try again.")
     if reading.action == "reweight" and reading.criterion_id is not None:
         return PriorityReading(True, "", TypedPriority(need, reading.criterion_id, reading.reading, reading.tokens, reading.cost_usd,
-                                                       reading.attempts))
+                                                       reading.attempts, reading.leaning))
     return PriorityReading(False, PRIORITY_UNCLEAR if reading.readable else f"The AI's reply could not be read. {PRIORITY_UNCLEAR}")
 
 
@@ -359,7 +361,7 @@ def chosen_points(r: ranking.RankedSupplier, marks: Sequence[Any], criteria: dic
 
 
 def apply_price_marks(outcomes: dict[str, evaluator.EvaluationOutcome], criteria: Sequence[RunCriterion],
-                      facts: dict[str, dict[str, Any]]) -> tuple[dict[str, evaluator.EvaluationOutcome], insights.PriceMarks | None, RunCriterion | None]:
+                      facts: dict[str, dict[str, Any]], direction: str = insights.PRICE_LOW) -> tuple[dict[str, evaluator.EvaluationOutcome], insights.PriceMarks | None, RunCriterion | None]:
     """Replace the AI's Commercial Value mark by the one worked out from the totals (insights.price_marks). Only suppliers whose
     evaluation did not fail and whose total is stated count. Returns the new outcomes, the marks and the criterion used
     (None, None when nothing was changed: no price criterion, or fewer than two totals)."""
@@ -367,13 +369,13 @@ def apply_price_marks(outcomes: dict[str, evaluator.EvaluationOutcome], criteria
     if criterion is None:
         return outcomes, None, None
     totals = {n: insights.price_facts(facts[n], None).total_rs for n, o in outcomes.items() if not o.failed}
-    worked = insights.price_marks(totals, criterion.max_score)     # type: ignore[arg-type]
+    worked = insights.price_marks(totals, criterion.max_score, direction)     # type: ignore[arg-type]
     if worked is None:
         return outcomes, None, criterion
     changed = dict(outcomes)
     for name, mark in worked.marks.items():
         outcome = outcomes[name]
-        reason = insights.price_reason(worked.totals_rs[name], worked.reference_rs, mark, criterion.max_score)
+        reason = insights.price_reason(worked.totals_rs[name], worked.reference_rs, mark, criterion.max_score, direction)
         marks = [c.model_copy(update={"score": mark, "justification": reason, "evidence": "", "filled_by_validator": False})
                  if c.criterion_id == criterion.criterion_id else c for c in outcome.scorecard.criteria]
         changed[name] = replace(outcome, scorecard=outcome.scorecard.model_copy(update={"criteria": marks}))
@@ -441,10 +443,19 @@ def run_evaluation(
     # marks do not depend on the weights, so the same marks are simply weighted differently).
     request = priorities or PriorityRequest()
     plan = reweight.plan_priorities(criteria, request.ticked)
-    if plan.changed:
+    kept_typed = tuple(t for t in request.typed if t.criterion_id in plan.ticked)    # a sentence whose tick was removed is dropped
+    lean = next((t.leaning for t in reversed(kept_typed) if t.leaning is not None and t.leaning.changes_anything), None)
+    direction = lean.price if lean is not None and lean.price else None      # None: the AI's own price mark, as the spec says
+    if lean is not None:                  # F21b: what the buyer leans towards sets the weights, and which end of the price range wins
+        try:
+            lean_plan = leaning_tool.plan(criteria, lean)
+            new_weights = lean_plan.new_weights()
+            criteria = [replace(c, weight=new_weights[c.criterion_id]) for c in criteria]
+        except ValueError:
+            lean = None
+    elif plan.changed:
         new_weights = plan.new_weights()
         criteria = [replace(c, weight=new_weights[c.criterion_id]) for c in criteria]
-    kept_typed = tuple(t for t in request.typed if t.criterion_id in plan.ticked)    # a sentence whose tick was removed is dropped
 
     moment = now()
     run_id = make_run_id(moment, token())
@@ -470,7 +481,8 @@ def run_evaluation(
     try:
         log(f"Checked inputs: {len(proposals)} proposal(s), criteria weights total {total_weight:g}, "
             f"budget {_rupees(terms.budget_rs)} for {terms.quantity} laptop(s).")
-        snapshot = [{"criterion_id": c.criterion_id, "name": c.name, "weight": c.weight, "max_score": c.max_score}
+        snapshot = [{"criterion_id": c.criterion_id, "name": c.name, "weight": c.weight, "max_score": c.max_score,
+                     **({"direction": direction} if direction and insights.is_price_criterion(c.name) else {})}
                     for c in criteria]
         temperature = client.temperature_for("scoring")
         with repository.connection() as conn:
@@ -495,8 +507,9 @@ def run_evaluation(
                 audit.log_event(conn, run_id, reviewer_name.strip() or REVIEWER, "priorities_set", {
                     "ticked": list(plan.ticked), "skipped": list(plan.skipped), "everything_ticked": plan.everything_ticked,
                     "typed": [{"text": t.text, "criterion_id": t.criterion_id, "reading": t.reading} for t in kept_typed],
+                    "leaning": _leaning_data(lean), "price_direction": direction,
                     "weights": [{"criterion_id": l.criterion_id, "name": l.name, "was": l.was, "now": l.now} for l in plan.lines]})
-            log(reweight.describe_priorities(plan))
+            log(describe_weights(lean_plan) if lean is not None else reweight.describe_priorities(plan))
 
         # --- read the documents
         with repository.connection() as conn:
@@ -570,19 +583,22 @@ def run_evaluation(
         if price_criterion is not None:
             ai_price_marks = {n: next((c.score for c in o.scorecard.criteria if c.criterion_id == price_criterion.criterion_id), None)
                               for n, o in outcomes.items()}
-        outcomes, worked, _used = apply_price_marks(outcomes, criteria, facts)
+        outcomes, worked, _used = apply_price_marks(outcomes, criteria, facts, direction) if direction else (outcomes, None, price_criterion)
         for n in outcomes:
             if worked is not None and n in worked.marks:
                 evidence_flags[n][price_criterion.criterion_id] = None     # type: ignore[union-attr]
         if worked is not None:
             record("system", "price_marks_set", {
+                "direction": direction,
                 "criterion_id": price_criterion.criterion_id,       # type: ignore[union-attr]
                 "lowest_total_rs": worked.reference_rs, "marks": worked.marks, "totals_rs": worked.totals_rs,
                 "ai_marks": ai_price_marks, "without_total": list(worked.without_total)})
             log(f"Price marks worked out from the totals (lowest {insights.format_lakh(worked.reference_rs)} gets full marks)"
                 + (f"; no total for {', '.join(worked.without_total)}, so the AI's mark is kept." if worked.without_total else "."))
-        elif price_criterion is not None:
+        elif price_criterion is not None and direction:
             log("Price marks kept as the AI gave them: fewer than two suppliers state a total price.")
+        elif price_criterion is not None:
+            log("Price marks are the AI's own: no price wish was given.")
 
         weights = [ranking.CriterionWeight(c.criterion_id, c.weight, c.max_score) for c in criteria]
         inputs = [ranking.SupplierInput(n, p.submission_date, p.experience_rating,  # type: ignore[arg-type]
@@ -769,11 +785,11 @@ class _ReviewState:
         return self.suppliers[name]
 
 
-def _load_state(conn: sqlite3.Connection, run_id: str) -> _ReviewState:
+def _load_state(conn: sqlite3.Connection, run_id: str, *, open_only: bool = True) -> _ReviewState:
     run = repository.get_run(conn, run_id)
     if run is None:
         raise review.ReviewError("This run was not found.")
-    if run.status != repository.RUN_EVALUATED:
+    if open_only and run.status != repository.RUN_EVALUATED:
         raise review.ReviewError(f"This run is {run.status.lower()}, so it can no longer be changed.")
     stored = repository.list_supplier_results(conn, run_id)
     if not stored:
@@ -858,6 +874,7 @@ class Understanding:
     message: str
     criterion_id: int | None = None
     reading: str = ""
+    leaning: leaning_tool.Leaning | None = None   # what the person leans towards (F21b), confirmed with the reading
 
 
 def _check_round(state: _ReviewState, round_no: int) -> None:
@@ -912,9 +929,10 @@ def understand_need(
             audit.log_event(conn, run_id, "AI", "need_interpreted", {
                 "text": need, "action": reading.action, "criterion_id": reading.criterion_id, "reading": reading.reading,
                 "readable": reading.readable, "llm_calls": reading.attempts, "model": settings.model, "provider": settings.provider,
-                "tokens": reading.tokens, "cost_usd": reading.cost_usd, "requested_by": who})
+                "tokens": reading.tokens, "cost_usd": reading.cost_usd, "requested_by": who,
+                "leaning": _leaning_data(reading.leaning)})
         if reading.action == "reweight" and reading.criterion_id is not None:
-            return Understanding(True, "", reading.criterion_id, reading.reading)
+            return Understanding(True, "", reading.criterion_id, reading.reading, reading.leaning)
         if not reading.readable:
             return Understanding(False, f"The AI's reply could not be read. {PICK_AN_OPTION} Nothing was changed.")
         said = reweight.UNSUPPORTED_ACTIONS.get(reading.action, "I could not match that to anything this evaluation looks at.")
@@ -923,9 +941,71 @@ def understand_need(
         return Understanding(False, _failed_outcome(error).message)
 
 
+def _leaning_data(lean: leaning_tool.Leaning | None) -> dict[str, Any] | None:
+    if lean is None:
+        return None
+    return {"price": lean.price, "only_id": lean.only_id, "emphasis": {str(i): level for i, level in lean.emphasis}}
+
+
+def price_direction_of(snapshot: Sequence[Mapping[str, Any]]) -> str | None:
+    """The end of the price range the buyer asked for in this run ("low" or "high"), or None when they asked for neither. With None the
+    Commercial Value mark is the AI's own, as the spec says; the price formula is used only on the buyer's request."""
+    for item in snapshot:
+        if insights.is_price_criterion(item.get("name")) and item.get("direction") in (insights.PRICE_LOW, insights.PRICE_HIGH):
+            return str(item["direction"])
+    return None
+
+
+def ai_price_source(conn: sqlite3.Connection, run_id: str, results: dict[str, dict[str, Any]],
+                    criteria: Sequence[RunCriterion]) -> dict[str, dict[str, Any]]:
+    """The saved results with the Commercial Value mark put back to the AI's own (the latest stored attempt of each supplier)."""
+    criterion = next((c for c in criteria if insights.is_price_criterion(c.name)), None)
+    if criterion is None:
+        return results
+    latest: dict[str, repository.AttemptRecord] = {}
+    for a in repository.list_attempts(conn, run_id):
+        if a.criterion_id == criterion.criterion_id and (a.supplier_name not in latest or a.attempt_no >= latest[a.supplier_name].attempt_no):
+            latest[a.supplier_name] = a
+    changed = copy.deepcopy(results)
+    for name, attempt in latest.items():
+        for item in changed.get(name, {}).get("criteria") or []:
+            if isinstance(item, dict) and item.get("criterion_id") == criterion.criterion_id:
+                item.update(score=attempt.score, justification=attempt.justification, evidence=attempt.evidence)
+    return changed
+
+
+def set_price_direction(results: dict[str, dict[str, Any]], criteria: Sequence[RunCriterion], direction: str) -> dict[str, dict[str, Any]]:
+    """The saved Commercial Value marks worked out again from the saved totals, for the wanted end of the price range. Suppliers whose
+    evaluation failed or that state no total keep the mark they have. Needs at least two stated totals; otherwise nothing changes."""
+    criterion = next((c for c in criteria if insights.is_price_criterion(c.name)), None)
+    if criterion is None:
+        return results
+    totals = {}
+    for name, result in results.items():
+        if result.get("evaluation_failed"):
+            continue
+        facts = result.get("extracted_facts")
+        totals[name] = insights.price_facts(facts if isinstance(facts, dict) else None, None).total_rs
+    worked = insights.price_marks(totals, criterion.max_score, direction)       # type: ignore[arg-type]
+    if worked is None:
+        return results
+    changed = copy.deepcopy(results)
+    for name, mark in worked.marks.items():
+        reason = insights.price_reason(worked.totals_rs[name], worked.reference_rs, mark, criterion.max_score, direction)
+        for item in changed[name].get("criteria") or []:
+            if isinstance(item, dict) and item.get("criterion_id") == criterion.criterion_id:
+                item.update(score=mark, justification=reason, evidence="", filled_by_validator=False)
+    return changed
+
+
+def describe_weights(plan: reweight.Reweighting) -> str:
+    parts = [f"{line.name} {reweight.percent(line.was)}% to {reweight.percent(line.now)}%" for line in plan.lines if line.was != line.now]
+    return "Counting for this run: " + "; ".join(parts) + "." if parts else "The weights stay as they are."
+
+
 def change_priorities(
     run_id: str, satisfaction: int, criterion_id: int, round_no: int, typed_need: str = "", actor: str = REVIEWER,
-    *, reading: str = "", proposed_id: int | None = None,
+    *, reading: str = "", proposed_id: int | None = None, leaning: leaning_tool.Leaning | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> ReviewOutcome:
     """The person is not satisfied (1 to 3) and said what with: this criterion counts for more in THIS run (spec 11.2: +10 points,
@@ -949,7 +1029,16 @@ def change_priorities(
                 raise review.ReviewError(ROUNDS_USED_TEXT)
             _check_round(state, round_no)
             criterion = state.criterion(criterion_id)
-            plan = reweight.plan_reweight(state.criteria, criterion_id)
+            lean = leaning if leaning is not None and leaning.changes_anything else None
+            if lean is not None:           # F21b: what the person leans towards sets the weights (and maybe the end of the price range)
+                try:
+                    plan = leaning_tool.plan(state.criteria, lean, criterion_id)
+                except ValueError as exc:
+                    raise review.ReviewError(str(exc)) from None
+            else:
+                plan = reweight.plan_reweight(state.criteria, criterion_id)
+            old_direction = price_direction_of(state.run.criteria_snapshot)
+            direction = lean.price if lean is not None and lean.price else old_direction     # None: no price wish, the AI's own marks
             terms = _terms_of(state.run, "the industry score cannot be worked out again with the new priorities")
             new_weights = plan.new_weights()
             new_criteria = tuple(replace(c, weight=new_weights[c.criterion_id]) for c in state.criteria)
@@ -959,8 +1048,11 @@ def change_priorities(
             old_ranked = _rank_inputs(state, old_results)
             results: dict[str, dict[str, Any]] = {}
             industry_scores: dict[str, float] = {}
+            source = {n: copy.deepcopy(dict(s.result)) for n, s in state.suppliers.items()}
+            if direction != old_direction and direction is not None:
+                source = set_price_direction(source, state.criteria, direction)
             for name, stored in state.suppliers.items():
-                result = copy.deepcopy(dict(stored.result))
+                result = source[name]
                 facts = result.get("extracted_facts")
                 graded = industry.industry_score(facts if isinstance(facts, dict) else None, benchmarks, new_criteria, terms)
                 result.update(industry_score=graded.score, industry_breakdown=_breakdown(graded))
@@ -974,7 +1066,9 @@ def change_priorities(
             need = reweight.clean_need(typed_need)
             option = next(o.label for o in reweight.options_for(state.criteria) if o.criterion_id == criterion_id)
             weights = [{"criterion_id": line.criterion_id, "name": line.name, "was": line.was, "now": line.now} for line in plan.lines]
-            snapshot = [{**item, "weight": new_weights[int(item["criterion_id"])]} for item in state.run.criteria_snapshot]
+            snapshot = [{**item, "weight": new_weights[int(item["criterion_id"])],
+                         **({"direction": direction} if direction and insights.is_price_criterion(item.get("name")) else {})}
+                        for item in state.run.criteria_snapshot]
             created = _iso(now())
             repository.update_run_weights(conn, run_id, json.dumps(snapshot))
             repository.add_feedback(
@@ -983,14 +1077,16 @@ def change_priorities(
                 details={"round": round_no, "satisfaction": score, "how": "typed" if need else "option", "option": option,
                          "typed": need, "reading": reweight.clean_need(reading), "proposed_criterion_id": proposed_id,
                          "criterion": criterion.name, "weights": weights, "before": before, "after": after,
-                         "recommended_before": recommended_before, "recommended_after": recommended_after, "by": who})
+                         "recommended_before": recommended_before, "recommended_after": recommended_after, "by": who,
+                         "leaning": _leaning_data(lean), "price_direction": direction})
             _save_ranking(conn, run_id, state, ranked, new_results, eligible, industry_scores)
             audit.log_event(conn, run_id, who, "priorities_changed", {
                 "round": round_no, "satisfaction": score, "criterion_id": criterion_id, "criterion": criterion.name,
                 "reason": need or option, "how": "typed" if need else "option", "weights": weights,
                 "recommended_before": recommended_before, "recommended_after": recommended_after})
             _log_ranking(conn, run_id, ranked, f"{criterion.name} counts for more (round {round_no})")
-        return ReviewOutcome(True, f"{reweight.describe_reweighting(plan)} {review.describe_recommendation(recommended_before, recommended_after)}")
+        said = describe_weights(plan) if lean is not None else reweight.describe_reweighting(plan)
+        return ReviewOutcome(True, f"{said} {review.describe_recommendation(recommended_before, recommended_after)}")
     except (review.ReviewError, sqlite3.Error, OSError) as error:
         return _failed_outcome(error)
 
@@ -1011,6 +1107,11 @@ def accept_recommendation(
             if not satisfied and reweight.rounds_left(state.feedback) > 0:
                 raise review.ReviewError("You are not satisfied yet, so say what you are not satisfied with first.")
             _check_round(state, round_no)
+            returned = False
+            if not satisfied:                      # F21b: every round used and still not satisfied: back to the original best fit
+                returned = restore_original(run_id, who, now=now)
+                if returned:
+                    state = _load_state(conn, run_id)
             board = _board(state.suppliers)
             chosen = review.recommended_of(board)
             if chosen is None:
@@ -1023,7 +1124,8 @@ def accept_recommendation(
             audit.log_event(conn, run_id, who, "recommendation_accepted", {
                 "supplier": chosen, "satisfaction": score, "accepted_anyway": not satisfied,
                 "rounds_used": details["rounds_used"]})
-        return ReviewOutcome(True, f"You accepted {chosen}. This evaluation is now final.")
+        return ReviewOutcome(True, (RETURNED_TEXT.format(n=reweight.MAX_ROUNDS) + " " if returned else "")
+                             + f"You accepted {chosen}. This evaluation is now final.")
     except (review.ReviewError, sqlite3.Error, OSError) as error:
         return _failed_outcome(error)
 
@@ -1210,6 +1312,145 @@ def _negotiation_inputs(run: repository.RunRecord, result: dict[str, Any]) -> tu
     return points, len(rows)
 
 
+# ---------------------------------------------------------------- the original best fit and the price warning (F21b)
+
+RETURNED_TEXT = ("You were not satisfied after all {n} rounds, so the final recommendation is the best fit with the original weights "
+                 "(your changes stay in the audit trail).")
+
+
+def _original_weights(conn: sqlite3.Connection, state: _ReviewState) -> list[ranking.CriterionWeight]:
+    """The weights before any of the person's changes: the marking scheme in Setup (the run's own weight for a criterion Setup lost)."""
+    template = {c.criterion_id: c.weight for c in repository.list_criteria(conn, state.run.template_id)}
+    return [ranking.CriterionWeight(c.criterion_id, template.get(c.criterion_id, c.weight), c.max_score) for c in state.criteria]
+
+
+def _original_ranking(conn: sqlite3.Connection, state: _ReviewState) -> tuple[dict[str, dict[str, Any]], ranking.RankingResult, list[ranking.CriterionWeight]]:
+    """Everyone ranked with the original weights and the lowest price winning, from the saved marks. Saves nothing."""
+    weights = _original_weights(conn, state)
+    source = {n: copy.deepcopy(dict(s.result)) for n, s in state.suppliers.items()}
+    source = ai_price_source(conn, state.run.rfp_run_id, source, state.criteria)       # the AI's own Commercial Value marks
+    return source, _rank_inputs(state, source, weights), weights
+
+
+def original_best_fit(run_id: str) -> str | None:
+    """The supplier the run would recommend with the original weights and the lowest price winning (None when nobody is eligible)."""
+    try:
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id, open_only=False)
+            _source, ranked, _w = _original_ranking(conn, state)
+    except (review.ReviewError, sqlite3.Error, OSError):
+        return None
+    eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
+    return review.recommended_of(review.standings(ranked, eligible))
+
+
+def restore_original(run_id: str, actor: str = REVIEWER, *, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> bool:
+    """The person used every round and is still not satisfied: the run goes back to the original weights and the lowest price winning,
+    and everyone is ranked again from the saved marks. Returns True when something changed. Idempotent. The feedback rounds, the
+    old weights and the old ranking stay in the audit trail; nothing is sent to the AI."""
+    with repository.connection() as conn:
+        state = _load_state(conn, run_id)
+        weights = _original_weights(conn, state)
+        direction_now = price_direction_of(state.run.criteria_snapshot)
+        same_weights = all(abs(w.weight - c.weight) < 1e-9 for w, c in zip(weights, state.criteria))
+        if same_weights and direction_now is None:
+            return False
+        benchmarks = repository.list_benchmarks(conn, state.run.template_id)
+        terms = _terms_of(state.run, "the industry score cannot be worked out again")
+        results, ranked, weights = _original_ranking(conn, state)
+        new_criteria = tuple(replace(c, weight=w.weight) for c, w in zip(state.criteria, weights))
+        industry_scores: dict[str, float] = {}
+        for name, result in results.items():
+            facts = result.get("extracted_facts")
+            graded = industry.industry_score(facts if isinstance(facts, dict) else None, benchmarks, new_criteria, terms)
+            result.update(industry_score=graded.score, industry_breakdown=_breakdown(graded))
+            industry_scores[name] = graded.score
+        old_ranked = _rank_inputs(state, {n: s.result for n, s in state.suppliers.items()})
+        new_results = review.apply_ranking(results, ranked, old_ranked.warnings)
+        eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
+        before, after = _board(state.suppliers), review.standings(ranked, eligible)
+        by_id = {c.criterion_id: c.weight for c in new_criteria}
+        snapshot = [{k: v for k, v in item.items() if k != "direction"} | {"weight": by_id[int(item["criterion_id"])]}
+                    for item in state.run.criteria_snapshot]
+        repository.update_run_weights(conn, run_id, json.dumps(snapshot))
+        _save_ranking(conn, run_id, state, ranked, new_results, eligible, industry_scores)
+        audit.log_event(conn, run_id, actor or REVIEWER, "returned_to_best_fit", {
+            "rounds_used": reweight.rounds_used(state.feedback), "recommended_before": review.recommended_of(before),
+            "recommended_after": review.recommended_of(after), "weights": [{"criterion_id": c.criterion_id, "name": c.name, "was": c.weight,
+                                                                           "now": by_id[c.criterion_id]} for c in state.criteria]})
+        _log_ranking(conn, run_id, ranked, "Back to the original weights (all rounds used, not satisfied)")
+    return True
+
+
+def overpay_warning(run_id: str) -> str | None:
+    """A red warning when the buyer asked for the most expensive option and a better fit exists at a lower price: they would be paying
+    more than the original best fit. None when the run does not want the dearest, or the dearest is also the best fit."""
+    with repository.connection() as conn:
+        run = repository.get_run(conn, run_id)
+        if run is None or price_direction_of(run.criteria_snapshot) != insights.PRICE_HIGH:
+            return None
+        stored = {s.supplier_name: s for s in repository.list_supplier_results(conn, run_id)}
+        if not stored:
+            return None
+    chosen = review.recommended_of(_board(stored))
+    best = original_best_fit(run_id)
+    if chosen is None or best is None or chosen == best:
+        return None
+
+    def total(name: str) -> float | None:
+        facts = stored[name].result.get("extracted_facts")
+        return insights.price_facts(facts if isinstance(facts, dict) else None, None).total_rs
+
+    a, b = total(chosen), total(best)
+    price = (f" ({evaluator.format_rupees(a)} against {evaluator.format_rupees(b)})" if a is not None and b is not None else "")
+    return (f"You asked for the most expensive option, so {chosen} is recommended. You may be overpaying: {best} is the better fit "
+            f"for what you need{price}, and it costs less." if a is not None and b is not None and a > b else
+            f"You asked for the most expensive option, so {chosen} is recommended. {best} is the better fit for what you need{price}.")
+
+
+@dataclass(frozen=True)
+class Picks:
+    """The two picks of a run where the buyer asked for something (a priority ticked or written, or a price wish)."""
+
+    request: str                  # the best-ranked eligible supplier with the buyer's weights and price wish
+    ideal: str                    # the best-ranked eligible supplier with the original weights and the AI's own marks
+    same: bool
+    overpay: str | None = None    # the red warning, when the buyer asked for the dearest and the ideal fit costs less
+    request_rank_ideal: int | None = None   # the rank of the request's pick when everyone is ranked with the original weights
+    ideal_rank_request: int | None = None   # the rank of the ideal fit when everyone is ranked with the buyer's weights
+    request_rank: int | None = None         # the rank of the request's pick in the saved (request) ranking
+    ideal_rank: int | None = None           # the rank of the ideal fit in the original ranking
+    total: int = 0                          # how many suppliers were ranked
+
+
+def picks_of(run_id: str) -> Picks | None:
+    """Both picks of a run, or None when the buyer asked for nothing (the ranking then is the ideal fit) or nobody is eligible."""
+    try:
+        with repository.connection() as conn:
+            state = _load_state(conn, run_id, open_only=False)
+            default = {w.criterion_id: w.weight for w in _original_weights(conn, state)}
+    except (review.ReviewError, sqlite3.Error, OSError):
+        return None
+    asked = price_direction_of(state.run.criteria_snapshot) is not None or any(
+        abs(c.weight - default.get(c.criterion_id, c.weight)) > 1e-9 for c in state.criteria)
+    if not asked:
+        return None
+    request = review.recommended_of(_board(state.suppliers))
+    try:
+        with repository.connection() as conn:
+            _src, ranked, _w = _original_ranking(conn, state)
+    except (sqlite3.Error, OSError, review.ReviewError):
+        return None
+    ideal_rank_of = {r.name: r.rank for r in ranked.suppliers}
+    eligible = {n: s.gates_passed for n, s in state.suppliers.items()}
+    ideal = review.recommended_of(review.standings(ranked, eligible))
+    if request is None or ideal is None:
+        return None
+    saved_rank = {n: s.final_rank for n, s in state.suppliers.items()}
+    return Picks(request, ideal, request == ideal, overpay_warning(run_id), ideal_rank_of.get(request), saved_rank.get(ideal),
+                 saved_rank.get(request), ideal_rank_of.get(ideal), len(saved_rank))
+
+
 def suggest_negotiation(
     run_id: str, supplier: str, settings: client.LLMSettings | None = None, actor: str = REVIEWER,
     *, backend: client.Backend | None = None, sleep: Callable[[float], None] = time.sleep,
@@ -1230,6 +1471,15 @@ def suggest_negotiation(
             return NegotiationOutcome(False, "That supplier was not found in this run.", supplier)
         if reweight.rounds_left(feedback) > 0:         # the person's own rule: only after every round was used (spec 11.2)
             return NegotiationOutcome(False, NEGOTIATION_LOCKED_TEXT, supplier)
+        returned = False
+        if run.status == repository.RUN_EVALUATED:     # F21b: every round used and still not satisfied: back to the original best fit
+            was_final = review.recommended_of(_board(stored))
+            returned = restore_original(run_id, who, now=now)
+            if returned:
+                with repository.connection() as conn:
+                    stored = {s.supplier_name: s for s in repository.list_supplier_results(conn, run_id)}
+                if supplier == was_final:          # the page asked for the pick it showed; the pick is now the original best fit
+                    supplier = review.recommended_of(_board(stored)) or supplier
         final = review.recommended_of(_board(stored))  # Python chooses: the best-ranked supplier that meets every must-have
         if final is None:
             return NegotiationOutcome(False, "No supplier meets every must-have, so there is no supplier to recommend or to negotiate with.", supplier)
@@ -1267,6 +1517,7 @@ def suggest_negotiation(
                 "priorities": list(asked), "fit_worded": fit.worded,
                 "asked_ai": settings is not None, "problem": note, "model": settings.model if settings else None,
                 "tokens": tokens, "cost_usd": cost})
-        return NegotiationOutcome(True, note or "", supplier, lines, settings is not None and note is None, fit)
+        said = RETURNED_TEXT.format(n=reweight.MAX_ROUNDS) + (" " if returned and note else "") if returned else ""
+        return NegotiationOutcome(True, said + (note or ""), supplier, lines, settings is not None and note is None, fit)
     except (sqlite3.Error, OSError, KeyError, TypeError, ValueError):
         return NegotiationOutcome(False, "The negotiation points could not be made because the saved results could not be read or the database was busy. Try again in a few seconds.", supplier)

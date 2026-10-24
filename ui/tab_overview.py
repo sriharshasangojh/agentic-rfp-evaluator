@@ -27,6 +27,7 @@ import streamlit as st
 from agents import evaluator, orchestrator
 from db import repository
 from tools import industry, insights
+from ui import picks as picks_view
 from ui import theme
 from ui.tab_new_evaluation import INDUSTRY_HELP, PPI_HELP, SHOWN_RUN_KEY
 
@@ -701,4 +702,5 @@ def render() -> None:
     if run is None or not suppliers:
         st.info("The results of this run could not be found. Run a new evaluation on the New evaluation tab.")
         return
+    picks_view.show(st, run_id)                         # F21b: the pick for the priorities and the best fit, side by side
     _show(build_overview(run, suppliers))

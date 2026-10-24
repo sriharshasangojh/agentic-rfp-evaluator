@@ -83,9 +83,18 @@ def seeded_database():
     seed.ensure_database()
 
 
-def three(totals: dict[str, object]):
+def cheapest_wish():
+    """The buyer said they want the cheapest: the price formula is used only on such a request (F21b)."""
+    from agents import orchestrator
+    from tools import leaning
+    lean = leaning.Leaning("low", None, ((3, 2),))
+    return orchestrator.PriorityRequest((3,), (orchestrator.TypedPriority("I want the cheapest", 3, "r", leaning=lean),))
+
+
+def three(totals: dict[str, object], wish: bool = True):
     rows_ = [r for r in FIVE if r[0] in (APEX, NEXA, HORIZON)]
-    return evaluated_run(rows_, facts={n: {**GOOD_FACTS, "grand_total_rs": t} for n, t in totals.items()})
+    return evaluated_run(rows_, facts={n: {**GOOD_FACTS, "grand_total_rs": t} for n, t in totals.items()},
+                         priorities=cheapest_wish() if wish else None)
 
 
 def commercial(stored, name: str) -> dict:
@@ -196,3 +205,26 @@ def test_without_a_commercial_value_criterion_nothing_is_changed():
     other = [orchestrator.RunCriterion(1, "Support", "", 100.0, 10.0)]
     changed, worked, used = orchestrator.apply_price_marks(outcomes, other, {"A": {"grand_total_rs": 200}, "B": {"grand_total_rs": 100}})
     assert changed is outcomes and worked is None and used is None
+
+
+def test_without_a_price_wish_the_ai_marks_are_used_and_the_formula_is_not_run():
+    result = three({APEX: 5900000, NEXA: 5000000, HORIZON: 6250000}, wish=False)
+    stored = saved(result.run_id)
+    assert [commercial(stored, n)["score"] for n in (APEX, NEXA, HORIZON)] == [5, 7, 7]               # the AI's own marks
+    assert not commercial(stored, NEXA)["justification"].startswith("Price mark worked out")
+    assert not rows("SELECT 1 FROM audit_log WHERE rfp_run_id = ? AND action = 'price_marks_set'", result.run_id)
+    assert any("Price marks are the AI's own" in s for s in result.steps)
+    from agents import orchestrator
+    from db import repository
+    with repository.connection() as conn:
+        assert orchestrator.price_direction_of(repository.get_run(conn, result.run_id).criteria_snapshot) is None
+
+
+def test_with_a_price_wish_the_run_remembers_it_and_logs_the_direction():
+    result = three({APEX: 5900000, NEXA: 5000000, HORIZON: 6250000})
+    from agents import orchestrator
+    from db import repository
+    with repository.connection() as conn:
+        assert orchestrator.price_direction_of(repository.get_run(conn, result.run_id).criteria_snapshot) == "low"
+    event = rows("SELECT details_json FROM audit_log WHERE rfp_run_id = ? AND action = 'price_marks_set'", result.run_id)[0]
+    assert json.loads(event["details_json"])["direction"] == "low"
