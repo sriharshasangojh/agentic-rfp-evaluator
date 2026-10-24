@@ -39,7 +39,7 @@ runs on Linux. If OneDrive locks a file, wait a few seconds and retry.
 | Overview | The recommendation, leaderboard with tie-break notes, strength table, price against budget, and (when you asked for something) the pick for your priorities beside the best fit. |
 | Scorecards | One supplier at a time: marks, evidence quotes, failed gates, missing items and warnings. |
 | Analysis | The what-if chart: where the winner would change if one area counted more. |
-| Re-evaluation | Rate the recommendation 1–5; below 4 you say what is wrong and the suppliers are ranked again (3 rounds). After the last round: the final recommendation and negotiation points. At the bottom: the PDF report and a mail link. |
+| Re-evaluation | Rate the recommendation 1–5; below 4 you say what is wrong and the suppliers are ranked again (3 rounds). After the last round: the final recommendation and negotiation points. A floating "Report" button at the bottom right of every tab opens the PDF download and a mail link. |
 | Ask the RFP | Questions answered only from the proposals; otherwise "Not stated in the proposal." |
 | Audit | Run history, the change trail (with a score-changes filter), PDF fingerprints (SHA-256) and the JSON download. |
 

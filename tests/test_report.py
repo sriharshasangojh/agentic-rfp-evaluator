@@ -86,15 +86,24 @@ class Page:
     def markdown(self, text, **kw): self.calls.append(("markdown", text))
     def download_button(self, label, data=None, **kw): self.calls.append(("download", label, kw.get("mime")))
     def link_button(self, label, url, **kw): self.calls.append(("link", label, url))
+    def container(self, key=None): self.calls.append(("container", key)); return _Ctx()
+    def popover(self, label, **kw): self.calls.append(("popover", label)); return _Ctx()
+
+
+class _Ctx:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
 
 
 def test_section_offers_download_and_mail_link_for_a_saved_run():
     seed.ensure_database()
     run = evaluated_run()
     page = Page()
-    report_ui.show(page, run.run_id)
+    report_ui.floating(page, run.run_id)
     kinds = [c[0] for c in page.calls]
-    assert "download" in kinds and "link" in kinds
+    assert "download" in kinds and "link" in kinds and ("popover", "Report") in page.calls
+    assert ("container", report_ui.FLOAT_KEY) in page.calls
+    assert any(c[0] == "markdown" and "position:fixed" in c[1] and "bottom" in c[1] and "right" in c[1] for c in page.calls)
     link = [c for c in page.calls if c[0] == "link"][0]
     assert link[2].startswith("mailto:") and KEY not in link[2]
 
@@ -102,5 +111,6 @@ def test_section_offers_download_and_mail_link_for_a_saved_run():
 def test_section_is_silent_for_an_unknown_run():
     seed.ensure_database()
     page = Page()
-    report_ui.show(page, "RUN-NOPE")
+    report_ui.floating(page, "RUN-NOPE")
+    report_ui.floating(page, None)
     assert page.calls == []

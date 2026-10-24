@@ -14,7 +14,6 @@ from db import repository
 from tools import report as report_tool
 from ui import tab_audit, tab_overview
 
-TITLE = "Report"
 NOTE = "Download this evaluation as a PDF, or open your mail app with a short summary and attach the PDF yourself. Nothing is sent from here."
 PDF_LABEL = "Download PDF report"
 HTML_LABEL = "Download report (web page)"
@@ -44,13 +43,13 @@ def _small(st: Any, text: str) -> None:
     st.markdown(f'<p style="color:{tab_overview.MUTED};font-size:0.9rem;margin:0.25rem 0">{html.escape(text)}</p>', unsafe_allow_html=True)
 
 
-def show(st: Any, run_id: str) -> None:
-    built = build(run_id)
-    if built is None:
-        return
-    export, picks = built
-    st.markdown(f"#### {TITLE}")
-    _small(st, NOTE)
+FLOAT_KEY = "report_float"
+FLOAT_LABEL = "Report"
+FLOAT_CSS = (f"<style>.st-key-{FLOAT_KEY}{{position:fixed;bottom:1.25rem;right:1.25rem;z-index:1000;width:auto;"
+             f"box-shadow:0 4px 14px rgba(0,0,0,0.25);border-radius:0.6rem;background:#FFFFFF}}</style>")
+
+
+def _offer(st: Any, run_id: str, export: dict[str, Any], picks: dict[str, Any] | None) -> None:
     page = report_tool.report_html(export, picks)
     try:
         data, label, mime, extension = report_tool.report_pdf(page), PDF_LABEL, "application/pdf", "pdf"
@@ -59,3 +58,19 @@ def show(st: Any, run_id: str) -> None:
         _small(st, PDF_FAILED)
     st.download_button(label, data=data, file_name=report_tool.file_name(run_id, extension), mime=mime, key=f"report_dl_{run_id}")
     st.link_button(MAIL_LABEL, report_tool.mailto_link(export, picks), key=f"report_mail_{run_id}")
+
+
+def floating(st: Any, run_id: str | None) -> None:
+    """A button fixed at the bottom right of every tab; it opens a small panel with the PDF and the mail link.
+    Shown only when the run on show has a recommendation."""
+    if not run_id:
+        return
+    built = build(run_id)
+    if built is None or not (built[0].get("recommendation") or {}).get("recommended"):
+        return
+    export, picks = built
+    with st.container(key=FLOAT_KEY):
+        st.markdown(FLOAT_CSS, unsafe_allow_html=True)
+        with st.popover(FLOAT_LABEL, help=NOTE):
+            _small(st, NOTE)
+            _offer(st, run_id, export, picks)

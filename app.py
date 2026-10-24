@@ -16,7 +16,9 @@ from ui import (
     tab_scorecards,
     tab_setup,
 )
+from ui.report import floating as floating_report
 from ui.sidebar import render_sidebar
+from ui.tab_new_evaluation import SHOWN_RUN_KEY
 from ui.theme import inject_theme_css
 
 # Exactly eight tabs, in this order (spec section 13.3). The sixth is called "Re-evaluation" at the user's request; the spec calls it "Review".
@@ -59,6 +61,7 @@ def main() -> None:
         with streamlit_tab:
             with st.container(key=f"card_{index}"):
                 module.render()
+    floating_report(st, st.session_state.get(SHOWN_RUN_KEY))      # the report button, fixed at the bottom right of every tab
 
 
 main()
