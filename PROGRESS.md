@@ -38,6 +38,7 @@ user approves it. Milestones (M1 to M4) are push points: pre-push checks, then a
 | F18 | Analysis tab | Approved | 2026-10-24 | Heatmap, price vs quality scatter, what-if lines plus table tagging where the leader changes (insights.what_if, spec 10.3); 48 new tests; 30 of 30 deliberate breaks caught | Scatter budget line uses the run's budget (DECISIONS 69) | |
 | F19 | "Not happy?" flow | Replaced | 2026-10-24 | Already built as F13 (Review tab). What was left became "Your priorities" before a run (tick boxes + typed sentence on New evaluation); unused re_evaluate removed | 0 |
 | Priorities | Your priorities (before a run) | Approved | 2026-10-24 | Tick boxes and a typed sentence read by the AI and confirmed by the buyer; +10 per tick (cap 60, total 100), this run only; saved with the run and audited; tests: 52 + 13 new | 0 |
+| Price score | Commercial Value worked out from the totals | Built, awaiting approval | 2026-10-24 | Lowest total gets full marks, others max x lowest / total; AI marks kept in attempts; audit event `price_marks_set`; tests: 29 new | 0 |
 | F20 | Negotiation suggestions | Not started | | Budget points use the run's budget (DECISIONS 69) | |
 | F21 | Audit: history and trail | Not started | | | |
 | M3 | Milestone: push | Not started | | | |

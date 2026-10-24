@@ -422,7 +422,7 @@ FIVE = [("Apex Systems", date(2026, 10, 5), 4, [9, 7, 5, 9, 8]), ("BrightPath Te
         ("NexaWorks", date(2026, 10, 6), 4, [7, 9, 7, 7, 9]), ("Horizon Datacom", date(2026, 10, 6), 3, [7, 9, 7, 7, 9]),
         ("Orbit Digital", date(2026, 10, 8), 5, [7, 5, 7, 6, 9])]
 GOOD_FACTS = {"warranty_years": 3, "warranty_type": "on-site", "bis_named": True, "price_table_present": True, "delivery_weeks": 6,
-              "grand_total_rs": 5900000, "battery_hours": 11.5, "battery_measured": True}
+              "battery_hours": 11.5, "battery_measured": True}
 BAD_FACTS = {"warranty_years": 1, "warranty_type": "carry-in", "bis_named": None, "price_table_present": True, "delivery_weeks": 6}
 
 

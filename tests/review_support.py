@@ -26,7 +26,7 @@ FIVE = [("Apex Systems", date(2026, 10, 5), 4, [9, 7, 5, 9, 8]), ("BrightPath Te
 NAMES = [n for n, *_ in FIVE]
 APEX, BRIGHT, NEXA, HORIZON, ORBIT = NAMES
 GOOD_FACTS = {"warranty_years": 3, "warranty_type": "on-site", "bis_named": True, "price_table_present": True, "delivery_weeks": 6,
-              "grand_total_rs": 5900000, "unit_price_rs": 59000, "battery_hours": 11.5, "battery_measured": True}
+              "unit_price_rs": 59000, "battery_hours": 11.5, "battery_measured": True}   # no grand total: the price mark stays as the AI gave it
 BAD_FACTS = {"warranty_years": 1, "warranty_type": "carry-in", "bis_named": None, "price_table_present": True, "delivery_weeks": 6}
 
 

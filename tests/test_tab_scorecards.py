@@ -1029,7 +1029,7 @@ FIVE = [("Apex Systems", date(2026, 10, 5), 4, [9, 7, 5, 9, 8]), ("BrightPath Te
         ("NexaWorks", date(2026, 10, 6), 4, [7, 9, 7, 7, 9]), ("Horizon Datacom", date(2026, 10, 6), 3, [7, 9, 7, 7, 9]),
         ("Orbit Digital", date(2026, 10, 8), 5, [7, 5, 7, 6, 9])]
 GOOD_FACTS = {"warranty_years": 3, "warranty_type": "on-site", "bis_named": True, "price_table_present": True, "delivery_weeks": 6,
-              "grand_total_rs": 5900000, "battery_hours": 11.5, "battery_measured": True}
+              "battery_hours": 11.5, "battery_measured": True}
 BAD_FACTS = {"warranty_years": 1, "warranty_type": "carry-in", "bis_named": None, "price_table_present": True, "delivery_weeks": 6}
 
 
@@ -1068,7 +1068,7 @@ def test_a_batch_that_was_really_run_reads_back_into_every_part_of_the_scorecard
     assert [round(l.relative_pct or 0, 1) for l in apex.lines] == [100.0, 77.8, 62.5, 100.0, 88.9]
     assert [l.weight for l in apex.lines] == [30.0, 20.0, 20.0, 20.0, 10.0]
     assert apex.lines[0].evidence == "quote 1 (Page 1)" and apex.lines[0].justification == "why 1"
-    assert [f.value for f in apex.facts] == ["Rs 59,00,000", "3 years", "6 weeks", "11.5 hours", None]
+    assert [f.value for f in apex.facts] == [None, "3 years", "6 weeks", "11.5 hours", None]
     assert len(apex.attributes) == 8
     assert all(g.passed for g in apex.gates) and len(apex.gates) == 4
     bright = cards["BrightPath Tech"]

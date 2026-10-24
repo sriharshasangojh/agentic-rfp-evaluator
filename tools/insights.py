@@ -7,7 +7,7 @@ features. Pure functions only: no LLM, no I/O, no randomness, no clock.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 
@@ -431,3 +431,52 @@ def what_if(suppliers: Sequence[ranking.SupplierInput], eligible: Sequence[str],
     changes = tuple(LeaderChange(weights[i], weights[i + 1], leaders[i], leaders[i + 1])
                     for i in range(len(weights) - 1) if leaders[i] != leaders[i + 1])
     return WhatIf(tuple(weights), tuple(WhatIfLine(s.name, tuple(ppis[s.name])) for s in suppliers), tuple(leaders), changes, price.weight)
+
+
+# ---------------------------------------------------------------- the price score (Commercial Value from the real totals)
+
+PRICE_CRITERION = "commercial value"     # the criterion that stands for price in the seeded marking scheme (compared in lower case)
+
+
+def is_price_criterion(name: object) -> bool:
+    return isinstance(name, str) and name.strip().casefold() == PRICE_CRITERION
+
+
+@dataclass(frozen=True)
+class PriceMarks:
+    """The price marks of one batch: `marks` and `totals_rs` by supplier name, for the suppliers that state a total."""
+
+    reference_rs: float                     # the lowest total in the batch: it gets the full mark
+    marks: dict[str, float]
+    totals_rs: dict[str, float]
+    without_total: tuple[str, ...]          # suppliers with no usable total: they keep the AI's mark
+
+
+def price_marks(totals: Mapping[str, object], max_score: float) -> PriceMarks | None:
+    """The Commercial Value mark worked out from the totals: the lowest total gets `max_score`, every other supplier gets
+    max_score x lowest / its total (2 decimals, half up). The AI reads a price table well but does not weigh how much cheaper
+    one offer is, so the price gap is worked out here. Needs at least two suppliers with a usable total (positive number);
+    otherwise returns None and every mark stays as the AI gave it."""
+    usable = {name: float(v) for name, v in totals.items() if _is_amount(v) and v > 0}      # type: ignore[operator]
+    if len(usable) < 2 or not _is_amount(max_score) or max_score <= 0:
+        return None
+    lowest = min(usable.values(), key=_exact)
+    marks = {}
+    for name, total in usable.items():
+        hundredths = int(_exact(max_score) * _exact(lowest) / _exact(total) * 100 + Fraction(1, 2))
+        marks[name] = hundredths / 100
+    return PriceMarks(lowest, marks, usable, tuple(n for n in totals if n not in usable))
+
+
+def _lakh_number(rs: float) -> str:
+    return format_lakh(rs).removeprefix("Rs ").removesuffix(" lakh")
+
+
+def price_reason(total_rs: float, reference_rs: float, mark: float, max_score: float) -> str:
+    """Why a supplier got its price mark, in plain words (shown as the justification of the Commercial Value mark)."""
+    top = f"{max_score:g}"
+    if total_rs == reference_rs:
+        return (f"Price mark worked out from the totals, not marked by the AI: this is the lowest total in this batch "
+                f"({format_lakh(total_rs)}), so it gets the full {top} marks.")
+    return (f"Price mark worked out from the totals, not marked by the AI: the lowest total in this batch is {format_lakh(reference_rs)} "
+            f"and this total is {format_lakh(total_rs)}, so {top} x {_lakh_number(reference_rs)} / {_lakh_number(total_rs)} = {mark:g}.")

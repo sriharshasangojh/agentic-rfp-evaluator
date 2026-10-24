@@ -358,6 +358,28 @@ def chosen_points(r: ranking.RankedSupplier, marks: Sequence[Any], criteria: dic
     return chosen, support
 
 
+def apply_price_marks(outcomes: dict[str, evaluator.EvaluationOutcome], criteria: Sequence[RunCriterion],
+                      facts: dict[str, dict[str, Any]]) -> tuple[dict[str, evaluator.EvaluationOutcome], insights.PriceMarks | None, RunCriterion | None]:
+    """Replace the AI's Commercial Value mark by the one worked out from the totals (insights.price_marks). Only suppliers whose
+    evaluation did not fail and whose total is stated count. Returns the new outcomes, the marks and the criterion used
+    (None, None when nothing was changed: no price criterion, or fewer than two totals)."""
+    criterion = next((c for c in criteria if insights.is_price_criterion(c.name)), None)
+    if criterion is None:
+        return outcomes, None, None
+    totals = {n: insights.price_facts(facts[n], None).total_rs for n, o in outcomes.items() if not o.failed}
+    worked = insights.price_marks(totals, criterion.max_score)     # type: ignore[arg-type]
+    if worked is None:
+        return outcomes, None, criterion
+    changed = dict(outcomes)
+    for name, mark in worked.marks.items():
+        outcome = outcomes[name]
+        reason = insights.price_reason(worked.totals_rs[name], worked.reference_rs, mark, criterion.max_score)
+        marks = [c.model_copy(update={"score": mark, "justification": reason, "evidence": "", "filled_by_validator": False})
+                 if c.criterion_id == criterion.criterion_id else c for c in outcome.scorecard.criteria]
+        changed[name] = replace(outcome, scorecard=outcome.scorecard.model_copy(update={"criteria": marks}))
+    return changed, worked, criterion
+
+
 def _total(values: Sequence[float | int | None]) -> float | int | None:
     known = [v for v in values if v is not None]
     return sum(known) if known else None
@@ -541,6 +563,26 @@ def run_evaluation(
                 "failed": [f"{g.name}: {g.reason}" for g in gates_tool.failed_gates(gate_results[n])]})
         log(f"Checked {len(gate_list)} gate(s) for {len(names)} supplier(s): "
             + (f"{len(not_eligible)} not eligible ({', '.join(not_eligible)})." if not_eligible else "all eligible."))
+
+        # --- the price mark is worked out from the totals (the AI's own mark is kept in the attempts table)
+        ai_price_marks = {}
+        price_criterion = next((c for c in criteria if insights.is_price_criterion(c.name)), None)
+        if price_criterion is not None:
+            ai_price_marks = {n: next((c.score for c in o.scorecard.criteria if c.criterion_id == price_criterion.criterion_id), None)
+                              for n, o in outcomes.items()}
+        outcomes, worked, _used = apply_price_marks(outcomes, criteria, facts)
+        for n in outcomes:
+            if worked is not None and n in worked.marks:
+                evidence_flags[n][price_criterion.criterion_id] = None     # type: ignore[union-attr]
+        if worked is not None:
+            record("system", "price_marks_set", {
+                "criterion_id": price_criterion.criterion_id,       # type: ignore[union-attr]
+                "lowest_total_rs": worked.reference_rs, "marks": worked.marks, "totals_rs": worked.totals_rs,
+                "ai_marks": ai_price_marks, "without_total": list(worked.without_total)})
+            log(f"Price marks worked out from the totals (lowest {insights.format_lakh(worked.reference_rs)} gets full marks)"
+                + (f"; no total for {', '.join(worked.without_total)}, so the AI's mark is kept." if worked.without_total else "."))
+        elif price_criterion is not None:
+            log("Price marks kept as the AI gave them: fewer than two suppliers state a total price.")
 
         weights = [ranking.CriterionWeight(c.criterion_id, c.weight, c.max_score) for c in criteria]
         inputs = [ranking.SupplierInput(n, p.submission_date, p.experience_rating,  # type: ignore[arg-type]
