@@ -48,7 +48,7 @@ FLOAT_KEY = "report_float"
 FLOAT_LABEL = "Report"
 FLOAT_CSS = (
     f"<style>"
-    f".st-key-{FLOAT_KEY}{{position:fixed;bottom:1.5rem;right:1.5rem;z-index:1000;width:auto}}"
+    f".st-key-{FLOAT_KEY}{{position:fixed;bottom:4.5rem;right:1.5rem;z-index:1000;width:auto}}"
     f".st-key-{FLOAT_KEY} button{{background:{theme.HEADING};border:1px solid {theme.HEADING};border-radius:999px;"
     f"padding:0.55rem 1.4rem;box-shadow:0 6px 18px rgba(11,79,74,0.35);transition:background 0.15s,transform 0.15s}}"
     f".st-key-{FLOAT_KEY} button:hover,.st-key-{FLOAT_KEY} button:focus{{background:{theme.PRIMARY};border-color:{theme.PRIMARY};"
