@@ -78,8 +78,8 @@ def overview_args(run_id):
 
 NEED = "I want a laptop that lasts a full working day"
 READING = "I understood: battery life matters more to you."
-ROUND_ONE_WEIGHTS = [26.25, 17.5, 30.0, 17.5, 8.75]           # price raised from 20 to 30
-ROUND_TWO_WEIGHTS = [36.25, 15.13, 25.93, 15.13, 7.56]        # then technical raised from 26.25 to 36.25
+ROUND_ONE_WEIGHTS = [24.37, 16.25, 35.0, 16.25, 8.13]           # price raised from 20 to 35
+ROUND_TWO_WEIGHTS = [39.37, 13.03, 28.05, 13.03, 6.52]         # then technical raised from 24.37 to 39.37
 
 
 def priorities(run_id, clock, satisfaction=2, criterion=PRICE, round_no=1, typed="", actor="Sri", **extra):
@@ -301,11 +301,11 @@ def test_not_being_satisfied_raises_the_chosen_criterion_and_ranks_everyone_agai
     assert order(run_id)[:3] == [(1, APEX), (2, NEXA), (3, HORIZON)]
     out = priorities(run_id, clock)
     assert out.ok
-    assert out.message == ("Commercial Value now counts for 30% of the decision (it was 20%). "
+    assert out.message == ("Commercial Value now counts for 35% of the decision (it was 20%). "
                            "We now recommend NexaWorks instead of Apex Systems.")
     assert weights_of(run_id) == ROUND_ONE_WEIGHTS and sum(weights_of(run_id)) == 100
     assert order(run_id) == [(1, NEXA), (2, HORIZON), (3, APEX), (4, ORBIT), (5, BRIGHT)]
-    assert {n: s.ppi for n, s in saved(run_id).items() if n in (NEXA, APEX)} == {APEX: 83.89, NEXA: 86.53}
+    assert {n: s.ppi for n, s in saved(run_id).items() if n in (NEXA, APEX)} == {APEX: 82.36, NEXA: 86.6}
     assert_consistent(run_id)
 
 
@@ -337,7 +337,7 @@ def test_the_industry_score_is_worked_out_again_with_the_new_weights(run_id, clo
         fresh = industry.industry_score(s.result["extracted_facts"], benchmarks, criteria, industry.PurchaseTerms(run.budget_rs, run.quantity))
         assert s.industry_score == s.result["industry_score"] == s.result["industry_breakdown"]["score"] == fresh.score
         assert [a["weight"] for a in s.result["industry_breakdown"]["attributes"]] == [a.weight for a in fresh.attributes]
-    assert {n: s.industry_score for n, s in saved(run_id).items()} == {APEX: 54.22, BRIGHT: 14.22, NEXA: 54.22, HORIZON: 54.22, ORBIT: 54.22}
+    assert {n: s.industry_score for n, s in saved(run_id).items()} == {APEX: 55.7, BRIGHT: 13.2, NEXA: 55.7, HORIZON: 55.7, ORBIT: 55.7}
 
 
 def test_the_decision_is_recorded_with_the_old_and_new_weights_and_the_old_and_new_winner(run_id, clock):
@@ -356,7 +356,7 @@ def test_the_decision_is_recorded_with_the_old_and_new_weights_and_the_old_and_n
     assert (details["recommended_before"], details["recommended_after"]) == (APEX, NEXA)
     assert [(r["rank"], r["supplier"]) for r in details["before"]] == [(1, APEX), (2, NEXA), (3, HORIZON), (4, ORBIT), (5, BRIGHT)]
     assert [(r["rank"], r["supplier"]) for r in details["after"]] == [(1, NEXA), (2, HORIZON), (3, APEX), (4, ORBIT), (5, BRIGHT)]
-    assert details["before"][0]["ppi"] == 86.94 and details["after"][0]["ppi"] == 86.53
+    assert details["before"][0]["ppi"] == 86.94 and details["after"][0]["ppi"] == 86.6
     assert [r["eligible"] for r in details["after"]] == [True, True, True, True, False]
 
 
@@ -381,7 +381,7 @@ def test_a_typed_need_is_kept_in_the_persons_words_with_what_the_ai_proposed(run
     details = json.loads(row["details_json"])
     assert (details["how"], details["typed"], details["reading"], details["proposed_criterion_id"]) == ("typed", NEED, READING, TECH)
     assert details["option"] == "The laptops should be better (battery life, speed, build quality)"
-    assert weights_of(run_id)[0] == 40.0
+    assert weights_of(run_id)[0] == 45.0
     assert json.loads(rows("SELECT details_json FROM audit_log WHERE action = 'priorities_changed'")[0]["details_json"])["reason"] == NEED
 
 
@@ -389,7 +389,7 @@ def test_the_person_may_change_what_the_ai_proposed(run_id, clock):
     assert priorities(run_id, clock, 2, PRICE, 1, typed="It costs too much", reading=READING, proposed_id=TECH).ok
     details = json.loads(rows("SELECT details_json FROM reviewer_feedback")[0]["details_json"])
     assert (details["proposed_criterion_id"], details["criterion"], details["how"]) == (TECH, "Commercial Value", "typed")
-    assert weights_of(run_id)[2] == 30.0
+    assert weights_of(run_id)[2] == 35.0
 
 
 def test_a_long_typed_need_is_cut_to_300_characters(run_id, clock):
@@ -401,7 +401,7 @@ def test_each_criterion_can_be_raised(run_id, clock):
     for criterion in (TECH, PLAN, PRICE, SECURITY, SUPPORT):
         evaluated = evaluated_run().run_id
         out = priorities(evaluated, clock, criterion=criterion)
-        assert out.ok and weights_of(evaluated)[criterion - 1] == [40.0, 30.0, 30.0, 30.0, 20.0][criterion - 1]
+        assert out.ok and weights_of(evaluated)[criterion - 1] == [45.0, 35.0, 35.0, 35.0, 25.0][criterion - 1]
         assert sum(weights_of(evaluated)) == 100
         assert_consistent(evaluated)
 
@@ -409,7 +409,7 @@ def test_each_criterion_can_be_raised(run_id, clock):
 def test_the_second_round_starts_from_the_weights_of_the_first(run_id, clock):
     assert priorities(run_id, clock, 2, PRICE, 1).ok
     out = priorities(run_id, clock, 3, TECH, 2)
-    assert out.ok and out.message == ("Technical Capability now counts for 36.25% of the decision (it was 26.25%). "
+    assert out.ok and out.message == ("Technical Capability now counts for 39.37% of the decision (it was 24.37%). "
                                       "We now recommend Apex Systems instead of NexaWorks.")
     assert weights_of(run_id) == ROUND_TWO_WEIGHTS and sum(weights_of(run_id)) == 100
     assert [json.loads(r["details_json"])["round"] for r in rows("SELECT details_json FROM reviewer_feedback ORDER BY id")] == [1, 2]
@@ -547,7 +547,7 @@ def test_the_overview_and_the_json_file_read_the_new_priorities_without_changes(
     assert [w for _c, _n, w in overview.criteria] == ROUND_ONE_WEIGHTS
     export = tab_audit.build_export(run, stored, overview)
     nexa = next(s for s in export["suppliers"] if s["supplier_name"] == NEXA)
-    assert nexa["rank"] == 1 and nexa["ppi"] == 86.53 and [c["weight"] for c in nexa["criteria"]] == ROUND_ONE_WEIGHTS
+    assert nexa["rank"] == 1 and nexa["ppi"] == 86.6 and [c["weight"] for c in nexa["criteria"]] == ROUND_ONE_WEIGHTS
     assert export["recommendation"]["recommended"] == NEXA
     assert [c["weight"] for c in export["criteria_snapshot"]] == ROUND_ONE_WEIGHTS
 

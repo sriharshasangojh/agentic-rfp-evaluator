@@ -7,7 +7,7 @@ what they need. So the tab asks one question and, if the answer is "not satisfie
 2. 4 or 5: they can accept it (the evaluation becomes final). 1 to 3: "What are you not satisfied with?", with plain options (the price
    is too high, the laptops should be better, ...) and "None of the above" where they write what they need in their own words. The AI
    reads those words and proposes ONE area; the person confirms it (or picks another) before anything changes.
-3. The area they chose counts for more in this run (+10 points, at most 60), everyone is ranked again from the AI's saved marks, and the
+3. The area they chose counts for more in this run (+15 points, at most 60), everyone is ranked again from the AI's saved marks, and the
    new result is shown with what changed and why. At most 3 rounds.
 
 The AI's marks are never changed here; only how much each area counts for. The page itself stays short: the recommendation, what changed

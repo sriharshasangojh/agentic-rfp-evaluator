@@ -1,6 +1,6 @@
 """Tests for the satisfaction question and the priorities rule (feature F13, spec 11.2): `tools/reweight.py`, plain Python.
 
-The numbers follow the spec: the chosen criterion gets +10 points (at most 60), every other weight is scaled by the same factor so the
+The numbers follow the spec: the chosen criterion gets +15 points (at most 60), every other weight is scaled by the same factor so the
 total is exactly 100, rounded to 2 decimals with the remainder on the largest other weight. Applies to one run only."""
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def total(plan):
 # ---------------------------------------------------------------- the constants and the scale
 
 def test_the_constants_follow_the_spec_and_the_users_benchmark():
-    assert (reweight.MAX_ROUNDS, reweight.STEP, reweight.CAP, reweight.TOTAL) == (3, 10, 60, 100)
+    assert (reweight.MAX_ROUNDS, reweight.STEP, reweight.CAP, reweight.TOTAL) == (3, 15, 60, 100)
     assert reweight.SCALE == (1, 2, 3, 4, 5) and reweight.SATISFIED_AT == 4
     assert reweight.ACTION_REWEIGHT == "reweight"
 
@@ -111,19 +111,19 @@ def test_a_typed_need_is_tidied_and_cut_to_300_characters(text, expected):
 
 # ---------------------------------------------------------------- the reweight rule
 
-def test_the_chosen_criterion_gets_ten_points_and_the_others_share_the_rest_proportionally():
-    plan = reweight.plan_reweight(SEEDED, 3)           # price: 20 -> 30
+def test_the_chosen_criterion_gets_fifteen_points_and_the_others_share_the_rest_proportionally():
+    plan = reweight.plan_reweight(SEEDED, 3)           # price: 20 -> 35
     now = plan.new_weights()
-    assert now[3] == 30.0
-    assert [now[i] for i in (1, 2, 4, 5)] == [26.25, 17.5, 17.5, 8.75]       # 70 shared as 30:20:20:10 of 80
+    assert now[3] == 35.0
+    assert [now[i] for i in (1, 2, 4, 5)] == [24.37, 16.25, 16.25, 8.13]       # 65 shared as 30:20:20:10 of 80
     assert total(plan) == 100
 
 
 def test_the_plan_remembers_the_old_weight_next_to_the_new_one():
     plan = reweight.plan_reweight(SEEDED, 3)
     assert [(l.criterion_id, l.name, l.was, l.now) for l in plan.lines] == [
-        (1, "Technical Capability", 30.0, 26.25), (2, "Implementation Plan", 20.0, 17.5), (3, "Commercial Value", 20.0, 30.0),
-        (4, "Security & Compliance", 20.0, 17.5), (5, "Support & Experience", 10.0, 8.75)]
+        (1, "Technical Capability", 30.0, 24.37), (2, "Implementation Plan", 20.0, 16.25), (3, "Commercial Value", 20.0, 35.0),
+        (4, "Security & Compliance", 20.0, 16.25), (5, "Support & Experience", 10.0, 8.13)]
     assert plan.target.name == "Commercial Value" and plan.target_id == 3
 
 
@@ -136,55 +136,57 @@ def test_the_input_is_not_changed():
 def test_the_total_is_exactly_100_whichever_criterion_is_chosen(target):
     plan = reweight.plan_reweight(SEEDED, target)
     assert total(plan) == 100
-    assert plan.target.now == plan.target.was + 10
+    assert plan.target.now == plan.target.was + 15
 
 
 def test_the_total_stays_exactly_100_when_the_scaling_does_not_divide_evenly():
-    plan = reweight.plan_reweight(scheme(30, 20, 20, 20, 10), 5)       # others get 50 of 90: 16.666..., 11.111..., 5.555...
+    plan = reweight.plan_reweight(scheme(30, 20, 20, 20, 10), 5)       # others get 75 of 90: 25, 16.666..., 16.666..., 16.666...
     assert total(plan) == 100
-    assert plan.new_weights()[5] == 20.0
+    assert plan.new_weights()[5] == 25.0
 
 
 def test_a_rounding_remainder_that_is_too_much_is_taken_off_the_largest_other_weight():
-    plan = reweight.plan_reweight(scheme(40, 20, 20, 20), 1)          # 50 left for three equal 20s: 16.67 x 3 = 50.01, so 0.01 comes off one
-    now = plan.new_weights()
-    assert now[1] == 50.0
-    assert (now[2], now[3], now[4]) == (16.66, 16.67, 16.67)
-    assert total(plan) == 100
-
-
-def test_a_rounding_remainder_that_is_missing_is_added_to_the_largest_other_weight():
-    plan = reweight.plan_reweight(scheme(55, 15, 15, 15), 1)          # capped at 60; 40 left: 13.33 x 3 = 39.99, so 0.01 is added to one
-    now = plan.new_weights()
-    assert now[1] == 60.0
-    assert (now[2], now[3], now[4]) == (13.34, 13.33, 13.33)
-    assert total(plan) == 100
-
-
-def test_the_remainder_goes_on_the_one_criterion_with_the_largest_weight_not_the_first_one():
-    plan = reweight.plan_reweight(scheme(40, 10, 40, 10), 1)          # others 10, 40, 10 share 50: 8.33, 33.33, 8.33 = 49.99
-    now = plan.new_weights()
-    assert (now[2], now[3], now[4]) == (8.33, 33.34, 8.33)
-    assert total(plan) == 100
-
-
-def test_a_tie_for_the_largest_other_weight_goes_to_the_lowest_criterion_id():
-    plan = reweight.plan_reweight(scheme(10, 30, 30, 30), 1)          # 80 left for three equal 30s: 26.67 x 3 = 80.01
+    plan = reweight.plan_reweight(scheme(5, 31.67, 31.67, 31.67), 1)  # 80 left for three equal weights: 26.67 x 3 = 80.01, so 0.01 comes off one
     now = plan.new_weights()
     assert now[1] == 20.0
     assert (now[2], now[3], now[4]) == (26.66, 26.67, 26.67)
     assert total(plan) == 100
 
 
+def test_a_rounding_remainder_that_is_missing_is_added_to_the_largest_other_weight():
+    plan = reweight.plan_reweight(scheme(6, 31.33, 31.33, 31.33), 1)  # 79 left for three equal weights: 26.33 x 3 = 78.99, so 0.01 is added to one
+    now = plan.new_weights()
+    assert now[1] == 21.0
+    assert (now[2], now[3], now[4]) == (26.34, 26.33, 26.33)
+    assert total(plan) == 100
+
+
+def test_the_remainder_goes_on_the_one_criterion_with_the_largest_weight_not_the_first_one():
+    plan = reweight.plan_reweight(scheme(35, 10, 20, 35), 1)          # others 10, 20, 35 share 50: 7.69, 15.38, 26.92 = 49.99
+    now = plan.new_weights()
+    assert (now[2], now[3], now[4]) == (7.69, 15.38, 26.93)
+    assert total(plan) == 100
+
+
+def test_a_tie_for_the_largest_other_weight_goes_to_the_lowest_criterion_id():
+    plan = reweight.plan_reweight(scheme(20, 10, 35, 35), 1)          # 65 left: 10 gets 8.13, the two 35s get 28.44 each = 65.01
+    now = plan.new_weights()
+    assert now[1] == 35.0
+    assert (now[2], now[3], now[4]) == (8.13, 28.43, 28.44)
+    assert total(plan) == 100
+
+
 def test_the_new_weight_never_goes_above_60():
-    plan = reweight.plan_reweight(scheme(55, 15, 15, 15), 1)          # 55 + 10 would be 65
+    plan = reweight.plan_reweight(scheme(55, 15, 15, 15), 1)          # 55 + 15 would be 70
     assert plan.new_weights()[1] == 60.0
     plan = reweight.plan_reweight(scheme(52.5, 15, 15, 17.5), 1)
     assert plan.new_weights()[1] == 60.0 and total(plan) == 100
 
 
-def test_the_cap_is_reached_exactly_at_50_plus_10():
-    plan = reweight.plan_reweight(scheme(50, 20, 20, 10), 1)
+def test_the_cap_is_reached_exactly_at_45_plus_15_and_a_weight_that_would_pass_it_stops_at_60():
+    plan = reweight.plan_reweight(scheme(45, 20, 20, 15), 1)
+    assert plan.new_weights()[1] == 60.0 and total(plan) == 100
+    plan = reweight.plan_reweight(scheme(50, 20, 20, 10), 1)          # 50 + 15 would be 65
     assert plan.new_weights()[1] == 60.0 and total(plan) == 100
 
 
@@ -218,19 +220,19 @@ def test_a_zero_weight_stays_zero():
 
 def test_a_total_that_was_not_exactly_100_is_brought_to_exactly_100():
     plan = reweight.plan_reweight(scheme(25, 25, 25, 24.99), 1)
-    assert total(plan) == 100 and plan.new_weights()[1] == 35.0
+    assert total(plan) == 100 and plan.new_weights()[1] == 40.0
 
 
 def test_weights_with_decimals_are_kept_exact():
     plan = reweight.plan_reweight(scheme(32.5, 22.5, 22.5, 22.5), 1)
-    assert plan.new_weights()[1] == 42.5 and total(plan) == 100
+    assert plan.new_weights()[1] == 47.5 and total(plan) == 100
 
 
 def test_two_rounds_in_a_row_work_from_the_weights_of_the_round_before():
     first = reweight.plan_reweight(SEEDED, 3)
     second = reweight.plan_reweight([SimpleNamespace(criterion_id=l.criterion_id, name=l.name, weight=l.now) for l in first.lines], 1)
-    assert second.new_weights()[1] == 36.25                       # 26.25 + 10
-    assert second.new_weights()[3] == 25.93                       # 30 scaled by 63.75 / 73.75
+    assert second.new_weights()[1] == 39.37                       # 24.37 + 15
+    assert second.new_weights()[3] == 28.05                       # 35 scaled by 60.63 / 75.63
     assert total(second) == 100
 
 
@@ -248,9 +250,9 @@ def test_a_weight_is_written_the_way_people_write_it(value, text):
 
 def test_the_sentence_says_what_counts_for_more_and_by_how_much():
     assert reweight.describe_reweighting(reweight.plan_reweight(SEEDED, 3)) == \
-        "Commercial Value now counts for 30% of the decision (it was 20%)."
+        "Commercial Value now counts for 35% of the decision (it was 20%)."
     assert reweight.describe_reweighting(reweight.plan_reweight(scheme(32.5, 22.5, 22.5, 22.5), 2)) == \
-        "Implementation Plan now counts for 32.5% of the decision (it was 22.5%)."
+        "Implementation Plan now counts for 37.5% of the decision (it was 22.5%)."
 
 
 def test_what_the_ai_may_propose_but_this_version_cannot_do_is_explained_in_plain_words():

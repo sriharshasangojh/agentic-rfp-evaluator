@@ -1008,7 +1008,7 @@ def change_priorities(
     *, reading: str = "", proposed_id: int | None = None, leaning: leaning_tool.Leaning | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> ReviewOutcome:
-    """The person is not satisfied (1 to 3) and said what with: this criterion counts for more in THIS run (spec 11.2: +10 points,
+    """The person is not satisfied (1 to 3) and said what with: this criterion counts for more in THIS run (spec 11.2: +15 points,
     at most 60, the others scaled so the total stays 100), every supplier is ranked again from the AI's saved marks, and the
     industry score is worked out again with the new weights. Nothing is sent to the AI.
 

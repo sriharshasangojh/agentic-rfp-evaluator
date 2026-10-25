@@ -235,10 +235,11 @@ def test_the_final_pick_is_python_s_and_has_to_meet_every_must_have():
 def test_the_pick_follows_the_rounds_the_person_used():
     """Different choices in the rounds can end with a different final supplier; the points are always for the one Python picks."""
     a = run_with_gaps(rounds=False)
-    for round_no, criterion in enumerate((1, 1, 1), start=1):
+    # not the same criterion three times: at +15 points it would reach the cap of 60 by the second round
+    for round_no, criterion in enumerate((1, 2, 1), start=1):
         orchestrator.change_priorities(a.run_id, 2, criterion, round_no)
     b = run_with_gaps(rounds=False)
-    for round_no, criterion in enumerate((3, 3, 3), start=1):
+    for round_no, criterion in enumerate((3, 4, 3), start=1):
         orchestrator.change_priorities(b.run_id, 2, criterion, round_no)
     for run in (a, b):
         out = orchestrator.suggest_negotiation(run.run_id, final_of(run.run_id))

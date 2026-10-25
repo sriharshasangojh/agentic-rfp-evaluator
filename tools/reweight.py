@@ -9,11 +9,11 @@ Plan"; they know what they need. So the Review tab asks one question, "How satis
 
 Pure functions only: no I/O, no Streamlit, no LLM, no clock.
 
-The same rule is used before a run ("Your priorities" on the New evaluation tab): every ticked criterion gets the +10 once, in the
+The same rule is used before a run ("Your priorities" on the New evaluation tab): every ticked criterion gets the +15 points once, in the
 order of the marking scheme, so the same ticks always give the same weights (`plan_priorities`). The Review tab and `agents/orchestrator.py` call these, so the rules are
 written once and tested on their own.
 
-The reweight rule (spec 11.2): the chosen criterion's weight becomes min(current + 10, 60); every other weight is scaled by the same
+The reweight rule (spec 11.2): the chosen criterion's weight becomes min(current + 15, 60); every other weight is scaled by the same
 factor so the total is exactly 100 (2 decimals; any rounding remainder goes on the largest other weight). It applies to this run only.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from tools.review import ReviewError, clean_text
 SCALE = (1, 2, 3, 4, 5)
 SATISFIED_AT = 4                # a score at or above this is "satisfied": the benchmark
 MAX_ROUNDS = 3                  # rounds of "not satisfied, change the priorities" per run (spec 11.2 says 2; the user asked for 3)
-STEP = Decimal("10")            # points added to the chosen criterion
+STEP = Decimal("15")            # points added to the chosen criterion each time (percent of the decision; the user raised this from 10 to 15)
 CAP = Decimal("60")             # a criterion never counts for more than this (percent of the decision)
 TOTAL = Decimal("100")
 NEED_MAX_CHARS = 300            # the longest typed need; it is also sent to the AI, so it is kept short
@@ -222,7 +222,7 @@ class PriorityPlan:
 def plan_priorities(criteria: Sequence[WeightLike], ticked_ids: Iterable[int]) -> PriorityPlan:
     """The run's weights when the buyer ticks the criteria that matter more to them.
 
-    Each ticked criterion gets the spec 11.2 rule once (+10 points, at most 60, the others scaled so the total stays 100), one after the
+    Each ticked criterion gets the spec 11.2 rule once (+15 points, at most 60, the others scaled so the total stays 100), one after the
     other in the order of the marking scheme. Ticks for criteria that are not part of the run are ignored. Ticking every criterion
     changes nothing: nothing then counts for more than the rest."""
     wanted = set(ticked_ids)

@@ -877,3 +877,8 @@ tones that are not overpowering. Nothing in the wiring or tab order changed.
 - Sidebar in deep teal to green with gold headings and a gold action button; "Get a key" link under the API key.
 - Overview: four key-fact tiles (the price tile says in or over budget but never prints the budget), a podium for ranks 1 to 3 with the recommended supplier in gold in the middle, bar rows for the rest, verdict banner in soft gold to mint.
 - Report PDF: a gold band under the title and a gold pie slice. All charts, analysis and re-evaluation views are unchanged.
+
+## Priority raise changed from +10 to +15 points
+- The user found that each tick, or each "not satisfied" round, moved a weight by 10 points and asked for 15. A criterion now gets +15 points each time (20 becomes 35), still capped at 60; every other weight is scaled by the same factor so the total stays exactly 100.
+- A first attempt read "15%" as 15 percent of the weight (20 becomes 23); the user said that was too small, so the rule is the original additive rule with `STEP` changed from 10 to 15 in `tools/reweight.py`.
+- The wording on `ui/tab_new_evaluation.py`, `ui/tab_review.py` and `agents/orchestrator.py` says +15 points, and the tests that had the old numbers in them were updated (`test_feedback_reweight`, `test_priorities`, `test_review_flow`, `test_tab_review`, `test_tab_new_evaluation`). On the seeded run, raising Commercial Value to 35 gives NexaWorks 86.60 against Apex 82.36.

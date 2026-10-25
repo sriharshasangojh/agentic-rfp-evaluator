@@ -360,7 +360,7 @@ def test_ticking_a_criterion_shows_the_new_weights_for_this_run_only():
     app = start()
     tab(app).checkbox(key="ne_prio_3").check().run()
     assert not app.exception
-    assert "Commercial Value 20% to 30%" in texts(tab(app), "caption")
+    assert "Commercial Value 20% to 35%" in texts(tab(app), "caption")
     assert "for this run only" in texts(tab(app), "caption")
 
 

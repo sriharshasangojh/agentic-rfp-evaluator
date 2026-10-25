@@ -41,7 +41,7 @@ def test_nothing_ticked_changes_nothing():
 
 def test_one_tick_is_the_spec_rule_once():
     plan = reweight.plan_priorities(CRITERIA, [PRICE])
-    assert weights(plan) == [26.25, 17.5, 30.0, 17.5, 8.75] and plan.changed and plan.ticked == (PRICE,)
+    assert weights(plan) == [24.37, 16.25, 35.0, 16.25, 8.13] and plan.changed and plan.ticked == (PRICE,)
 
 
 def test_one_tick_is_the_same_as_the_satisfaction_rule_of_the_review_tab():
@@ -75,7 +75,7 @@ def test_ticking_everything_changes_nothing_and_says_so():
 
 def test_ticks_for_criteria_that_are_not_in_the_run_are_ignored():
     plan = reweight.plan_priorities(CRITERIA, [99, PRICE])
-    assert plan.ticked == (PRICE,) and weights(plan) == [26.25, 17.5, 30.0, 17.5, 8.75]
+    assert plan.ticked == (PRICE,) and weights(plan) == [24.37, 16.25, 35.0, 16.25, 8.13]
     assert not reweight.plan_priorities(CRITERIA, [99]).changed
 
 
@@ -90,7 +90,7 @@ def test_one_skipped_tick_does_not_stop_the_others():
     mixed = [SimpleNamespace(criterion_id=1, name="Quality", weight=60.0), SimpleNamespace(criterion_id=2, name="Price", weight=30.0),
              SimpleNamespace(criterion_id=3, name="Support", weight=10.0)]
     plan = reweight.plan_priorities(mixed, [1, 2])
-    assert plan.skipped == ("Quality",) and plan.ticked == (2,) and plan.new_weights()[2] == 40.0
+    assert plan.skipped == ("Quality",) and plan.ticked == (2,) and plan.new_weights()[2] == 45.0
     assert "Quality already counts for as much as it can." in reweight.describe_priorities(plan)
 
 
@@ -107,8 +107,8 @@ def test_the_rule_does_not_change_what_it_is_given():
 
 def test_the_sentence_names_every_weight_that_changed_and_says_it_is_for_this_run():
     text = reweight.describe_priorities(reweight.plan_priorities(CRITERIA, [PRICE]))
-    assert text == ("With your priorities, for this run only: Technical Capability 30% to 26.25%; Implementation Plan 20% to 17.5%; "
-                    "Commercial Value 20% to 30%; Security & Compliance 20% to 17.5%; Support & Experience 10% to 8.75%.")
+    assert text == ("With your priorities, for this run only: Technical Capability 30% to 24.37%; Implementation Plan 20% to 16.25%; "
+                    "Commercial Value 20% to 35%; Security & Compliance 20% to 16.25%; Support & Experience 10% to 8.13%.")
     assert reweight.describe_priorities(reweight.plan_priorities(CRITERIA, [])) == "Nothing ticked: every criterion keeps the weight set on the Criteria tab."
 
 
@@ -221,7 +221,7 @@ def test_a_run_without_priorities_uses_the_setup_weights_and_logs_nothing():
 
 def test_a_tick_changes_this_runs_weights_and_not_the_marking_scheme():
     run = run_with([PRICE])
-    assert run_weights(run.run_id) == [26.25, 17.5, 30.0, 17.5, 8.75]
+    assert run_weights(run.run_id) == [24.37, 16.25, 35.0, 16.25, 8.13]
     assert setup_weights() == [30.0, 20.0, 20.0, 20.0, 10.0]
 
 
@@ -254,7 +254,7 @@ def test_the_ranking_can_differ_from_the_one_without_priorities():
 def test_each_suppliers_saved_criteria_carry_the_weights_of_the_run():
     run = run_with([PRICE])
     for s in saved(run.run_id).values():
-        assert [c["weight"] for c in s.result["criteria"]] == [26.25, 17.5, 30.0, 17.5, 8.75]
+        assert [c["weight"] for c in s.result["criteria"]] == [24.37, 16.25, 35.0, 16.25, 8.13]
 
 
 def test_the_choice_is_written_to_the_audit_log_with_the_old_and_new_weights():
@@ -326,7 +326,7 @@ def test_a_later_not_satisfied_round_starts_from_the_buyers_weights():
     run = run_with([PRICE])
     out = orchestrator.change_priorities(run.run_id, 2, TECH, 1)
     assert out.ok, out.message
-    assert "Technical Capability now counts for 36.25% of the decision (it was 26.25%)." in out.message
+    assert "Technical Capability now counts for 39.37% of the decision (it was 24.37%)." in out.message
 
 
 def test_the_overview_and_the_review_tab_read_a_run_with_priorities_like_any_other():

@@ -101,7 +101,7 @@ def _purchase_terms(disabled: bool) -> industry.PurchaseTerms | None:
 
 
 PRIORITIES_LABEL = "Your priorities (optional)"
-PRIORITIES_INTRO = ("Tick what matters more to you in this purchase. Each tick adds 10 points to that criterion's weight (at most 60) "
+PRIORITIES_INTRO = ("Tick what matters more to you in this purchase. Each tick adds 15 points to that criterion's weight (at most 60) "
                     "and the others shrink so the total stays 100. It applies to this evaluation only; the Criteria tab is not changed.")
 PRIORITIES_WRITE_LABEL = "Or tell us in your own words"
 PRIORITIES_WRITE_HELP = ("For example: I want laptops that last a full working day. The AI reads it and says which criterion it "

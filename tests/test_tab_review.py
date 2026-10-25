@@ -110,13 +110,13 @@ def test_a_round_shows_what_the_person_chose_what_counts_for_more_and_who_is_rec
     not_satisfied(run_id, actor="Asha")
     [r] = view_of(run_id).rounds
     assert (r.number, r.by, r.satisfaction, r.reason, r.typed, r.reading) == (1, "Asha", 2, PRICE_LABEL, False, "")
-    assert r.headline == "Commercial Value now counts for 30% of the decision (it was 20%)."
+    assert r.headline == "Commercial Value now counts for 35% of the decision (it was 20%)."
     assert [(w.criterion_id, w.name, w.was, w.now) for w in r.weights] == [
-        (1, "Technical Capability", 30.0, 26.25), (2, "Implementation Plan", 20.0, 17.5), (3, "Commercial Value", 20.0, 30.0),
-        (4, "Security & Compliance", 20.0, 17.5), (5, "Support & Experience", 10.0, 8.75)]
+        (1, "Technical Capability", 30.0, 24.37), (2, "Implementation Plan", 20.0, 16.25), (3, "Commercial Value", 20.0, 35.0),
+        (4, "Security & Compliance", 20.0, 16.25), (5, "Support & Experience", 10.0, 8.13)]
     assert r.recommended_before == APEX and r.recommendation == "We now recommend NexaWorks instead of Apex Systems."
     assert [(b.name, b.rank_now, b.rank_was, b.ppi_now, b.ppi_was) for b in r.board][:3] == [
-        (NEXA, 1, 2, 86.53, 86.39), (HORIZON, 2, 3, 86.53, 86.39), (APEX, 3, 1, 83.89, 86.94)]
+        (NEXA, 1, 2, 86.6, 86.39), (HORIZON, 2, 3, 86.6, 86.39), (APEX, 3, 1, 82.36, 86.94)]
     assert [(line.rank, line.name) for line in r.before][:2] == [(1, APEX), (2, NEXA)] and r.when.endswith("UTC")
 
 
@@ -124,7 +124,7 @@ def test_after_a_round_the_ranking_the_weights_and_the_original_are_all_there(ru
     not_satisfied(run_id)
     view = view_of(run_id)
     assert view.recommended == NEXA and [r.name for r in view.board][:3] == [NEXA, HORIZON, APEX]
-    assert [w for _n, w in view.weights] == [26.25, 17.5, 30.0, 17.5, 8.75]
+    assert [w for _n, w in view.weights] == [24.37, 16.25, 35.0, 16.25, 8.13]
     assert [(r.rank, r.name) for r in view.original] == [(1, APEX), (2, NEXA), (3, HORIZON), (4, ORBIT), (5, BRIGHT)]
     assert view.original_recommended == APEX and view.original_weights[2] == ("Commercial Value", 20.0)
     assert (view.rounds_used, view.rounds_left) == (1, 2)
@@ -138,7 +138,7 @@ def test_the_original_stays_the_very_first_state_after_a_second_round(run_id):
     assert view.original[0].name == APEX and dict(view.original_weights) == {
         "Technical Capability": 30.0, "Implementation Plan": 20.0, "Commercial Value": 20.0, "Security & Compliance": 20.0,
         "Support & Experience": 10.0}
-    assert view.rounds[1].headline == "Technical Capability now counts for 36.25% of the decision (it was 26.25%)."
+    assert view.rounds[1].headline == "Technical Capability now counts for 39.37% of the decision (it was 24.37%)."
     assert view.rounds[1].satisfaction == 3 and [r.number for r in view.rounds] == [1, 2]
 
 
@@ -275,8 +275,8 @@ def test_after_a_round_the_weights_table_shows_where_each_area_started(run_id):
     not_satisfied(run_id)
     view = view_of(run_id)
     markup = T.weights_html(view.weights, dict(view.original_weights))
-    assert '<td>Commercial Value</td><td class="rv-num">30%</td><td class="rv-num rv-sub">started at 20%</td>' in markup
-    assert '<td>Support &amp; Experience</td><td class="rv-num">8.75%</td><td class="rv-num rv-sub">started at 10%</td>' in markup
+    assert '<td>Commercial Value</td><td class="rv-num">35%</td><td class="rv-num rv-sub">started at 20%</td>' in markup
+    assert '<td>Support &amp; Experience</td><td class="rv-num">8.13%</td><td class="rv-num rv-sub">started at 10%</td>' in markup
     same = T.weights_html((("A", 20.0),), {"A": 20.0})
     assert "unchanged" in same and "started at" not in same
     assert '<td class="rv-num">-</td>' in T.weights_html((("A", None),))
@@ -286,13 +286,13 @@ def test_the_what_changed_box_says_what_was_chosen_what_counts_for_more_and_who_
     not_satisfied(run_id, actor="Asha")
     markup = T.round_html(view_of(run_id).rounds[0])
     assert_safe(markup)
-    assert "Commercial Value now counts for 30% of the decision (it was 20%)." in markup
+    assert "Commercial Value now counts for 35% of the decision (it was 20%)." in markup
     assert "Round 1 · " in markup and " · Asha</div>" in markup
     assert f"Satisfaction: 2 out of 5. You chose: “{PRICE_LABEL}”." in markup
     assert "<b>We now recommend NexaWorks instead of Apex Systems.</b>" in markup
-    assert "(up from 2)" in markup and "(down from 1)" in markup and "86.53 (was 86.39)" in markup and "83.89 (was 86.94)" in markup
+    assert "(up from 2)" in markup and "(down from 1)" in markup and "86.60 (was 86.39)" in markup and "82.36 (was 86.94)" in markup
     assert markup.count("<td>Eligible</td>") == 4 and markup.count("<td>Not eligible</td>") == 1
-    assert "<th>Counted for</th>" in markup and '<td class="rv-num">17.5%</td>' in markup
+    assert "<th>Counted for</th>" in markup and '<td class="rv-num">16.25%</td>' in markup
 
 
 def test_the_words_and_the_tables_of_a_round_can_be_drawn_apart_and_together_make_the_whole_box(run_id):
@@ -301,7 +301,7 @@ def test_the_words_and_the_tables_of_a_round_can_be_drawn_apart_and_together_mak
     words, tables = T.round_summary_html(round_), T.round_tables_html(round_)
     assert_safe(words)
     assert_safe(tables)
-    assert "<table" not in words and "Commercial Value now counts for 30%" in words and "<b>We now recommend NexaWorks instead of Apex Systems.</b>" in words
+    assert "<table" not in words and "Commercial Value now counts for 35%" in words and "<b>We now recommend NexaWorks instead of Apex Systems.</b>" in words
     assert "Commercial Value now counts" not in tables and "<th>Counted for</th>" in tables and "<th>Rank now</th>" in tables
     assert tables.count("<table") == 2
     assert T.round_html(round_) == words + tables
@@ -364,7 +364,7 @@ def test_the_history_tells_each_round_in_one_line_and_then_the_acceptance(run_id
     markup = T.history_html(view_of(run_id))
     assert_safe(markup)
     assert markup.count("<li>") == 4
-    assert f"Satisfaction 2 out of 5, chose “{PRICE_LABEL}”. Commercial Value now counts for 30%" in markup
+    assert f"Satisfaction 2 out of 5, chose “{PRICE_LABEL}”. Commercial Value now counts for 35%" in markup
     assert f"Satisfaction 3 out of 5, wrote “{NEED}”." in markup
     assert "Accepted Apex Systems with a satisfaction of 2 out of 5 (accepted although not satisfied: all rounds were used)." in markup
 
@@ -703,12 +703,12 @@ def test_clicking_rank_again_changes_the_priorities_shows_the_new_result_and_sta
     answer(page, score=2, why=PRICE)
     click(page, RANK_AGAIN)
     ok, message = message_of(page)
-    assert ok and message == ("Commercial Value now counts for 30% of the decision (it was 20%). "
+    assert ok and message == ("Commercial Value now counts for 35% of the decision (it was 20%). "
                               "We now recommend NexaWorks instead of Apex Systems.")
     assert [k for k in page.session_state if k.startswith(f"rv_{run_id}_1")] == []        # the typed answers were cleared
     draw(page)
     assert page.text("success", "error") == "" and T.MESSAGE_KEY not in page.session_state       # the page itself shows the result
-    assert message not in page.shown("markdown") and "Commercial Value now counts for 30% of the decision (it was 20%)." in page.shown("markdown")
+    assert message not in page.shown("markdown") and "Commercial Value now counts for 35% of the decision (it was 20%)." in page.shown("markdown")
     assert headings(page) == ["#### Where things stand", "#### What changed last", "#### Your answer", "#### More detail"]
     assert "We recommend NexaWorks" in page.shown("markdown")
     assert page.drop_down_labels() == ["To do (2)", "Full ranking (5 suppliers)", "What counts for how much", "Last round in detail (round 1)",
@@ -724,11 +724,11 @@ def test_the_what_changed_box_and_the_history_show_the_round(monkeypatch, run_id
     click(page, RANK_AGAIN)
     draw(page)
     shown = page.shown("markdown")
-    assert "Commercial Value now counts for 30% of the decision (it was 20%)." in shown and "We now recommend NexaWorks instead of Apex Systems." in shown
+    assert "Commercial Value now counts for 35% of the decision (it was 20%)." in shown and "We now recommend NexaWorks instead of Apex Systems." in shown
     assert f"Satisfaction: 2 out of 5. You chose: “{PRICE_LABEL}”." in shown
     assert "<table" not in page.shown()                                # the tables of the round are one click away, not on the page
     detail = page.inside("Last round in detail (round 1)")
-    assert "<th>Counted for</th>" in detail and "<th>Rank now</th>" in detail and "86.53 (was 86.39)" in detail
+    assert "<th>Counted for</th>" in detail and "<th>Rank now</th>" in detail and "86.60 (was 86.39)" in detail
     assert "started at 20%" in page.inside("What counts for how much") and "(recommended)" in page.inside("Full ranking (5 suppliers)")
     history = page.inside("History (1 round)")
     assert "**The original ranking**" in history and "Apex Systems (recommended)" in history
@@ -887,7 +887,7 @@ def test_confirming_ranks_again_with_the_ais_area_and_keeps_the_persons_words(mo
     click(page, UNDERSTAND)
     click(page, YES)
     ok, message = message_of(page)
-    assert ok and message.startswith("Technical Capability now counts for 40% of the decision (it was 30%).")
+    assert ok and message.startswith("Technical Capability now counts for 45% of the decision (it was 30%).")
     [row] = feedback_rows()
     assert (row["action"], row["criterion_id"], row["rating"], row["comment"]) == ("reweight", TECH, 3, NEED)
     details = json.loads(row["details_json"])
@@ -1073,7 +1073,7 @@ def test_the_other_tabs_show_the_new_ranking_straight_after_a_round(monkeypatch,
     with repository.connection() as conn:
         overview = tab_overview.build_overview(repository.get_run(conn, run_id), repository.list_supplier_results(conn, run_id))
     assert [r.name for r in overview.rows][:2] == [NEXA, HORIZON] and overview.recommended.name == NEXA
-    assert [w for _c, _n, w in overview.criteria] == [26.25, 17.5, 30.0, 17.5, 8.75]
+    assert [w for _c, _n, w in overview.criteria] == [24.37, 16.25, 35.0, 16.25, 8.13]
 
 
 # ---------------------------------------------------------------- the real app (needs Streamlit's AppTest)
@@ -1149,4 +1149,4 @@ def test_a_low_score_and_an_option_rank_the_suppliers_again():
     question_buttons(review_tab(app))[0].click().run()
     assert not app.exception
     text = shown(review_tab(app))
-    assert "Commercial Value now counts for 30% of the decision (it was 20%)." in text and "We recommend NexaWorks" in text
+    assert "Commercial Value now counts for 35% of the decision (it was 20%)." in text and "We recommend NexaWorks" in text
